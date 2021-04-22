@@ -1,2 +1,2 @@
-# guinsoomini
+# guinsoomin
 OSS storage platform.
