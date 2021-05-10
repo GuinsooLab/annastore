@@ -1,6 +1,6 @@
 # GuinsooMin
 
-![logo](./public/guinsoomin.svg)
+![logo](./public/GuinsooMin-Top.svg)
 
 `OSS storage platform.`
 
