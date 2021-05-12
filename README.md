@@ -4,7 +4,7 @@
 
 `OSS storage platform.`
 
-For more information, please referrer GLab.
+For more information, please referrer [GLab](https://guinsoolab.github.io/glab/).
 
 <br/>
 
