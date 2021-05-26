@@ -26,8 +26,7 @@ deliver a range of use cases from AI/ML, analytics, backup/restore and modern we
 - GuinsooMin is pioneering high performance object storage
 - Built on the principles of web scale.
 - The defacto standard for Amazon S3 compatibility 
-- Simply powerful 
-
+- Simply powerful
 
 <br/>
 
