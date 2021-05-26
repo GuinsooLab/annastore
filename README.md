@@ -34,3 +34,7 @@ deliver a range of use cases from AI/ML, analytics, backup/restore and modern we
 
 [GuinsooMin Guide](https://docs.min.io/).
 
+<br/>
+
+## License
+Use of GuinsooMin is governed by the GNU AGPLv3 license that can be found in the [LICENSE](./LICENSE) file.
