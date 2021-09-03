@@ -1,6 +1,8 @@
-# GuinsooMin
+<div align="center">
+    <img src="./public/guinsoomin-top.svg" width="50%" alt="logo" />
+</div>
 
-![logo](./public/guinsoomin-top.svg)
+# GuinsooMin
 
 `OSS storage platform.`
 
