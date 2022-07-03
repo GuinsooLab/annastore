@@ -6,8 +6,9 @@
 
 # AnnaStore
 
-[AnnaStore Overview](https://ciusji.gitbook.io/guinsoolab/products/data-storage/overview) |
-[AnnaStore on GuinsooLab](https://guinsoolab.github.io/glab)
+[AnnaStore Overview](https://ciusji.gitbook.io/guinsoolab/products/data-storage/overview) | 
+[AnnaStore on GuinsooLab](https://guinsoolab.github.io/glab) | 
+[AnnaStore Integrations](https://ciusji.gitbook.io/guinsoolab/products/data-storage/integrations)
 
 For more information, please referrer [GuinsooLab](https://guinsoolab.github.io/glab/).
 
@@ -29,7 +30,7 @@ deliver a range of use cases from AI/ML, analytics, backup/restore and modern we
 
 ## Documentation
 
-[GuinsooMin Guide](https://docs.min.io/).
+[AnnaStore Guide](https://docs.min.io/).
 
 ## License
 
