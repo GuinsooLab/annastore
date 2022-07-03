@@ -1,7 +1,7 @@
 <div align="center">
     <img src="./public/annaStore.svg" width="120" alt="logo" />
     <br/>
-    <small>OSS storage platform</small>
+    <small>a tiny object storage system</small>
 </div>
 
 # AnnaStore
