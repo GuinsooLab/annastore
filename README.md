@@ -1,3 +1,7 @@
+<div align="right">
+    <img src="./public/guinsoolab-badge.png" width="60" alt="badge">
+    <br />
+</div>
 <div align="center">
     <img src="./public/annaStore.svg" width="120" alt="logo" />
     <br/>
