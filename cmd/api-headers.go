@@ -28,9 +28,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minio/minio/cmd/crypto"
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/pkg/bucket/lifecycle"
+	"github.com/minio/minio/internal/crypto"
+	xhttp "github.com/minio/minio/internal/http"
 )
 
 // Returns a hexadecimal representation of time at the
@@ -53,7 +52,7 @@ func setCommonHeaders(w http.ResponseWriter) {
 
 	// Set `x-amz-bucket-region` only if region is set on the server
 	// by default minio uses an empty region.
-	if region := globalServerRegion; region != "" {
+	if region := globalSite.Region; region != "" {
 		w.Header().Set(xhttp.AmzBucketRegion, region)
 	}
 	w.Header().Set(xhttp.AcceptRanges, "bytes")
@@ -127,6 +126,11 @@ func setObjectHeaders(w http.ResponseWriter, objInfo ObjectInfo, rs *HTTPRangeSp
 
 	// Set all other user defined metadata.
 	for k, v := range objInfo.UserDefined {
+		// Empty values for object lock and retention can be skipped.
+		if v == "" && equals(k, xhttp.AmzObjectLockMode, xhttp.AmzObjectLockRetainUntilDate) {
+			continue
+		}
+
 		if strings.HasPrefix(strings.ToLower(k), ReservedMetadataPrefixLower) {
 			// Do not need to send any internal metadata
 			// values to client.
@@ -185,43 +189,21 @@ func setObjectHeaders(w http.ResponseWriter, objInfo ObjectInfo, rs *HTTPRangeSp
 		w.Header()[xhttp.AmzBucketReplicationStatus] = []string{objInfo.ReplicationStatus.String()}
 	}
 
-	if lc, err := globalLifecycleSys.Get(objInfo.Bucket); err == nil {
-		if opts.VersionID == "" {
-			if ruleID, expiryTime := lc.PredictExpiryTime(lifecycle.ObjectOpts{
-				Name:             objInfo.Name,
-				UserTags:         objInfo.UserTags,
-				VersionID:        objInfo.VersionID,
-				ModTime:          objInfo.ModTime,
-				IsLatest:         objInfo.IsLatest,
-				DeleteMarker:     objInfo.DeleteMarker,
-				SuccessorModTime: objInfo.SuccessorModTime,
-			}); !expiryTime.IsZero() {
-				w.Header()[xhttp.AmzExpiration] = []string{
-					fmt.Sprintf(`expiry-date="%s", rule-id="%s"`, expiryTime.Format(http.TimeFormat), ruleID),
-				}
-			}
-		}
-		if objInfo.IsRemote() {
-			// Check if object is being restored. For more information on x-amz-restore header see
-			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html#API_HeadObject_ResponseSyntax
-			w.Header()[xhttp.AmzStorageClass] = []string{objInfo.TransitionTier}
-		}
-		ruleID, transitionTime := lc.PredictTransitionTime(lifecycle.ObjectOpts{
-			Name:             objInfo.Name,
-			UserTags:         objInfo.UserTags,
-			VersionID:        objInfo.VersionID,
-			ModTime:          objInfo.ModTime,
-			IsLatest:         objInfo.IsLatest,
-			DeleteMarker:     objInfo.DeleteMarker,
-			TransitionStatus: objInfo.TransitionStatus,
-		})
-		if !transitionTime.IsZero() {
-			// This header is a MinIO centric extension to show expected transition date in a similar spirit as x-amz-expiration
-			w.Header()[xhttp.MinIOTransition] = []string{
-				fmt.Sprintf(`transition-date="%s", rule-id="%s"`, transitionTime.Format(http.TimeFormat), ruleID),
-			}
-		}
+	if objInfo.IsRemote() {
+		// Check if object is being restored. For more information on x-amz-restore header see
+		// https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html#API_HeadObject_ResponseSyntax
+		w.Header()[xhttp.AmzStorageClass] = []string{objInfo.TransitionedObject.Tier}
+	}
 
+	if lc, err := globalLifecycleSys.Get(objInfo.Bucket); err == nil {
+		lc.SetPredictionHeaders(w, objInfo.ToLifecycleOpts())
+	}
+
+	if v, ok := objInfo.UserDefined[ReservedMetadataPrefix+"compression"]; ok {
+		if i := strings.LastIndexByte(v, '/'); i >= 0 {
+			v = v[i+1:]
+		}
+		w.Header()[xhttp.MinIOCompressed] = []string{v}
 	}
 
 	return nil

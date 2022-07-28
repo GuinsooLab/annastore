@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"path"
@@ -29,8 +28,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/cmd/logger/message/log"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/minio/internal/logger/message/log"
+	"github.com/minio/minio/internal/logger/target/types"
 )
 
 type testLoggerI interface {
@@ -51,11 +51,18 @@ func (t *testingLogger) String() string {
 	return ""
 }
 
-func (t *testingLogger) Validate() error {
+func (t *testingLogger) Init() error {
 	return nil
 }
 
-func (t *testingLogger) Send(entry interface{}, errKind string) error {
+func (t *testingLogger) Cancel() {
+}
+
+func (t *testingLogger) Type() types.TargetType {
+	return types.TargetHTTP
+}
+
+func (t *testingLogger) Send(entry interface{}) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.t == nil {
@@ -67,13 +74,13 @@ func (t *testingLogger) Send(entry interface{}, errKind string) error {
 	}
 
 	t.t.Helper()
-	t.t.Log(e.Level, ":", errKind, e.Message)
+	t.t.Log(e.Level, ":", e.Message)
 	return nil
 }
 
 func addTestingLogging(t testLoggerI) func() {
 	tl := &testingLogger{t: t}
-	logger.AddTarget(tl)
+	logger.AddSystemTarget(tl)
 	return func() {
 		tl.mu.Lock()
 		defer tl.mu.Unlock()
@@ -92,20 +99,16 @@ func TestDataUpdateTracker(t *testing.T) {
 
 	dut.Current.bf = dut.newBloomFilter()
 
-	tmpDir, err := ioutil.TempDir("", "TestDataUpdateTracker")
+	tmpDir := t.TempDir()
+	err := os.MkdirAll(filepath.Dir(filepath.Join(tmpDir, dataUpdateTrackerFilename)), os.ModePerm)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = os.MkdirAll(filepath.Dir(filepath.Join(tmpDir, dataUpdateTrackerFilename)), os.ModePerm)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	dut.start(ctx, tmpDir)
 
-	var tests = []struct {
+	tests := []struct {
 		in    string
 		check []string // if not empty, check against these instead.
 		exist bool

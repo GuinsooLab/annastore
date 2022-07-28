@@ -21,9 +21,11 @@ import (
 	"net/http"
 	"os"
 	"testing"
+	"time"
 
-	xjwt "github.com/minio/minio/cmd/jwt"
-	"github.com/minio/minio/pkg/auth"
+	jwtgo "github.com/golang-jwt/jwt/v4"
+	"github.com/minio/minio/internal/auth"
+	xjwt "github.com/minio/minio/internal/jwt"
 )
 
 func testAuthenticate(authType string, t *testing.T) {
@@ -91,6 +93,14 @@ func TestAuthenticateURL(t *testing.T) {
 	testAuthenticate("url", t)
 }
 
+func getTokenString(accessKey, secretKey string) (string, error) {
+	claims := xjwt.NewMapClaims()
+	claims.SetExpiry(UTCNow().Add(defaultJWTExpiry))
+	claims.SetAccessKey(accessKey)
+	token := jwtgo.NewWithClaims(jwtgo.SigningMethodHS512, claims)
+	return token.SignedString([]byte(secretKey))
+}
+
 // Tests web request authenticator.
 func TestWebRequestAuthenticate(t *testing.T) {
 	obj, fsDir, err := prepareFS()
@@ -139,7 +149,7 @@ func TestWebRequestAuthenticate(t *testing.T) {
 	}
 
 	for i, testCase := range testCases {
-		_, _, gotErr := webRequestAuthenticate(testCase.req)
+		_, _, _, gotErr := metricsRequestAuthenticate(testCase.req)
 		if testCase.expectedErr != gotErr {
 			t.Errorf("Test %d, expected err %s, got %s", i+1, testCase.expectedErr, gotErr)
 		}
@@ -215,11 +225,22 @@ func BenchmarkAuthenticateNode(b *testing.B) {
 	}
 
 	creds := globalActiveCred
-	b.ResetTimer()
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		authenticateNode(creds.AccessKey, creds.SecretKey, "")
-	}
+	b.Run("uncached", func(b *testing.B) {
+		fn := authenticateNode
+		b.ResetTimer()
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			fn(creds.AccessKey, creds.SecretKey, "aud")
+		}
+	})
+	b.Run("cached", func(b *testing.B) {
+		fn := cachedAuthenticateNode(time.Second)
+		b.ResetTimer()
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			fn(creds.AccessKey, creds.SecretKey, "aud")
+		}
+	})
 }
 
 func BenchmarkAuthenticateWeb(b *testing.B) {

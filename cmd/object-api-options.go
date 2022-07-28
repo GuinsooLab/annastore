@@ -27,9 +27,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7/pkg/encrypt"
-	"github.com/minio/minio/cmd/crypto"
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/internal/crypto"
+	xhttp "github.com/minio/minio/internal/http"
+	"github.com/minio/minio/internal/logger"
 )
 
 // set encryption options for pass through to backend in the case of gateway and UserDefined metadata
@@ -71,6 +71,10 @@ func getDefaultOpts(header http.Header, copySource bool, metadata map[string]str
 		opts.ProxyHeaderSet = true
 		opts.ProxyRequest = strings.Join(v, "") == "true"
 	}
+	if _, ok := header[xhttp.MinIOSourceReplicationRequest]; ok {
+		opts.ReplicationRequest = true
+	}
+	opts.Speedtest = header.Get(globalObjectPerfUserMetadata) != ""
 	return
 }
 
@@ -83,7 +87,7 @@ func getOpts(ctx context.Context, r *http.Request, bucket, object string) (Objec
 
 	var partNumber int
 	var err error
-	if pn := r.URL.Query().Get(xhttp.PartNumber); pn != "" {
+	if pn := r.Form.Get(xhttp.PartNumber); pn != "" {
 		partNumber, err = strconv.Atoi(pn)
 		if err != nil {
 			return opts, err
@@ -93,7 +97,7 @@ func getOpts(ctx context.Context, r *http.Request, bucket, object string) (Objec
 		}
 	}
 
-	vid := strings.TrimSpace(r.URL.Query().Get(xhttp.VersionID))
+	vid := strings.TrimSpace(r.Form.Get(xhttp.VersionID))
 	if vid != "" && vid != nullVersionID {
 		_, err := uuid.Parse(vid)
 		if err != nil {
@@ -121,11 +125,21 @@ func getOpts(ctx context.Context, r *http.Request, bucket, object string) (Objec
 		}, nil
 	}
 
+	deletePrefix := false
+	if d := r.Header.Get(xhttp.MinIOForceDelete); d != "" {
+		if b, err := strconv.ParseBool(d); err == nil {
+			deletePrefix = b
+		} else {
+			return opts, err
+		}
+	}
+
 	// default case of passing encryption headers to backend
 	opts, err = getDefaultOpts(r.Header, false, nil)
 	if err != nil {
 		return opts, err
 	}
+	opts.DeletePrefix = deletePrefix
 	opts.PartNumber = partNumber
 	opts.VersionID = vid
 	delMarker := strings.TrimSpace(r.Header.Get(xhttp.MinIOSourceDeleteMarker))
@@ -143,19 +157,19 @@ func getOpts(ctx context.Context, r *http.Request, bucket, object string) (Objec
 				Err:    err,
 			}
 		}
-
 	}
+	opts.Versioned = globalBucketVersioningSys.PrefixEnabled(bucket, object)
+	opts.VersionSuspended = globalBucketVersioningSys.PrefixSuspended(bucket, object)
 	return opts, nil
 }
 
 func delOpts(ctx context.Context, r *http.Request, bucket, object string) (opts ObjectOptions, err error) {
-	versioned := globalBucketVersioningSys.Enabled(bucket)
 	opts, err = getOpts(ctx, r, bucket, object)
 	if err != nil {
 		return opts, err
 	}
-	opts.Versioned = versioned
-	opts.VersionSuspended = globalBucketVersioningSys.Suspended(bucket)
+	opts.Versioned = globalBucketVersioningSys.PrefixEnabled(bucket, object)
+	opts.VersionSuspended = globalBucketVersioningSys.PrefixSuspended(bucket, object)
 	delMarker := strings.TrimSpace(r.Header.Get(xhttp.MinIOSourceDeleteMarker))
 	if delMarker != "" {
 		switch delMarker {
@@ -164,23 +178,6 @@ func delOpts(ctx context.Context, r *http.Request, bucket, object string) (opts 
 		case "false":
 		default:
 			err = fmt.Errorf("Unable to parse %s, failed with %w", xhttp.MinIOSourceDeleteMarker, fmt.Errorf("DeleteMarker should be true or false"))
-			logger.LogIf(ctx, err)
-			return opts, InvalidArgument{
-				Bucket: bucket,
-				Object: object,
-				Err:    err,
-			}
-		}
-	}
-
-	purgeVersion := strings.TrimSpace(r.Header.Get(xhttp.MinIOSourceDeleteMarkerDelete))
-	if purgeVersion != "" {
-		switch purgeVersion {
-		case "true":
-			opts.VersionPurgeStatus = Complete
-		case "false":
-		default:
-			err = fmt.Errorf("Unable to parse %s, failed with %w", xhttp.MinIOSourceDeleteMarkerDelete, fmt.Errorf("DeleteMarkerPurge should be true or false"))
 			logger.LogIf(ctx, err)
 			return opts, InvalidArgument{
 				Bucket: bucket,
@@ -208,8 +205,10 @@ func delOpts(ctx context.Context, r *http.Request, bucket, object string) (opts 
 
 // get ObjectOptions for PUT calls from encryption headers and metadata
 func putOpts(ctx context.Context, r *http.Request, bucket, object string, metadata map[string]string) (opts ObjectOptions, err error) {
-	versioned := globalBucketVersioningSys.Enabled(bucket)
-	vid := strings.TrimSpace(r.URL.Query().Get(xhttp.VersionID))
+	versioned := globalBucketVersioningSys.PrefixEnabled(bucket, object)
+	versionSuspended := globalBucketVersioningSys.PrefixSuspended(bucket, object)
+
+	vid := strings.TrimSpace(r.Form.Get(xhttp.VersionID))
 	if vid != "" && vid != nullVersionID {
 		_, err := uuid.Parse(vid)
 		if err != nil {
@@ -240,6 +239,44 @@ func putOpts(ctx context.Context, r *http.Request, bucket, object string, metada
 			}
 		}
 	}
+	retaintimeStr := strings.TrimSpace(r.Header.Get(xhttp.MinIOSourceObjectRetentionTimestamp))
+	retaintimestmp := mtime
+	if retaintimeStr != "" {
+		retaintimestmp, err = time.Parse(time.RFC3339, retaintimeStr)
+		if err != nil {
+			return opts, InvalidArgument{
+				Bucket: bucket,
+				Object: object,
+				Err:    fmt.Errorf("Unable to parse %s, failed with %w", xhttp.MinIOSourceObjectRetentionTimestamp, err),
+			}
+		}
+	}
+
+	lholdtimeStr := strings.TrimSpace(r.Header.Get(xhttp.MinIOSourceObjectLegalHoldTimestamp))
+	lholdtimestmp := mtime
+	if lholdtimeStr != "" {
+		lholdtimestmp, err = time.Parse(time.RFC3339, lholdtimeStr)
+		if err != nil {
+			return opts, InvalidArgument{
+				Bucket: bucket,
+				Object: object,
+				Err:    fmt.Errorf("Unable to parse %s, failed with %w", xhttp.MinIOSourceObjectLegalHoldTimestamp, err),
+			}
+		}
+	}
+	tagtimeStr := strings.TrimSpace(r.Header.Get(xhttp.MinIOSourceTaggingTimestamp))
+	taggingtimestmp := mtime
+	if tagtimeStr != "" {
+		taggingtimestmp, err = time.Parse(time.RFC3339, tagtimeStr)
+		if err != nil {
+			return opts, InvalidArgument{
+				Bucket: bucket,
+				Object: object,
+				Err:    fmt.Errorf("Unable to parse %s, failed with %w", xhttp.MinIOSourceTaggingTimestamp, err),
+			}
+		}
+	}
+
 	etag := strings.TrimSpace(r.Header.Get(xhttp.MinIOSourceETag))
 	if etag != "" {
 		if metadata == nil {
@@ -256,6 +293,7 @@ func putOpts(ctx context.Context, r *http.Request, bucket, object string, metada
 			UserDefined:          metadata,
 			VersionID:            vid,
 			Versioned:            versioned,
+			VersionSuspended:     versionSuspended,
 			MTime:                mtime,
 		}, nil
 	}
@@ -263,6 +301,7 @@ func putOpts(ctx context.Context, r *http.Request, bucket, object string, metada
 		opts, err = getOpts(ctx, r, bucket, object)
 		opts.VersionID = vid
 		opts.Versioned = versioned
+		opts.VersionSuspended = versionSuspended
 		opts.UserDefined = metadata
 		return
 	}
@@ -280,6 +319,7 @@ func putOpts(ctx context.Context, r *http.Request, bucket, object string, metada
 			UserDefined:          metadata,
 			VersionID:            vid,
 			Versioned:            versioned,
+			VersionSuspended:     versionSuspended,
 			MTime:                mtime,
 		}, nil
 	}
@@ -290,7 +330,11 @@ func putOpts(ctx context.Context, r *http.Request, bucket, object string, metada
 	}
 	opts.VersionID = vid
 	opts.Versioned = versioned
+	opts.VersionSuspended = versionSuspended
 	opts.MTime = mtime
+	opts.ReplicationSourceLegalholdTimestamp = lholdtimestmp
+	opts.ReplicationSourceRetentionTimestamp = retaintimestmp
+	opts.ReplicationSourceTaggingTimestamp = taggingtimestmp
 	return opts, nil
 }
 
@@ -324,5 +368,24 @@ func copySrcOpts(ctx context.Context, r *http.Request, bucket, object string) (O
 	if err != nil {
 		return opts, err
 	}
+	return opts, nil
+}
+
+// get ObjectOptions for CompleteMultipart calls
+func completeMultipartOpts(ctx context.Context, r *http.Request, bucket, object string) (opts ObjectOptions, err error) {
+	mtimeStr := strings.TrimSpace(r.Header.Get(xhttp.MinIOSourceMTime))
+	mtime := UTCNow()
+	if mtimeStr != "" {
+		mtime, err = time.Parse(time.RFC3339, mtimeStr)
+		if err != nil {
+			return opts, InvalidArgument{
+				Bucket: bucket,
+				Object: object,
+				Err:    fmt.Errorf("Unable to parse %s, failed with %w", xhttp.MinIOSourceMTime, err),
+			}
+		}
+	}
+	opts.MTime = mtime
+	opts.UserDefined = make(map[string]string)
 	return opts, nil
 }

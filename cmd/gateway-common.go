@@ -24,12 +24,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minio/minio/cmd/config"
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/env"
-	"github.com/minio/minio/pkg/hash"
-	xnet "github.com/minio/minio/pkg/net"
+	"github.com/minio/minio/internal/config"
+	"github.com/minio/minio/internal/hash"
+	xhttp "github.com/minio/minio/internal/http"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/pkg/env"
+	xnet "github.com/minio/pkg/net"
 
 	minio "github.com/minio/minio-go/v7"
 )
@@ -130,7 +130,6 @@ func FromMinioClientListMultipartsInfo(lmur minio.ListMultipartUploadsResult) Li
 		CommonPrefixes:     commonPrefixes,
 		EncodingType:       lmur.EncodingType,
 	}
-
 }
 
 // FromMinioClientObjectInfo converts minio ObjectInfo to gateway ObjectInfo
@@ -287,7 +286,7 @@ func ErrorRespToObjectError(err error, params ...string) error {
 	}
 
 	if xnet.IsNetworkOrHostDown(err, false) {
-		return BackendDown{}
+		return BackendDown{Err: err.Error()}
 	}
 
 	minioErr, ok := err.(minio.ErrorResponse)
@@ -298,6 +297,10 @@ func ErrorRespToObjectError(err error, params ...string) error {
 	}
 
 	switch minioErr.Code {
+	case "PreconditionFailed":
+		err = PreConditionFailed{}
+	case "InvalidRange":
+		err = InvalidRange{}
 	case "BucketAlreadyOwnedByYou":
 		err = BucketAlreadyOwnedByYou{}
 	case "BucketNotEmpty":
@@ -333,6 +336,12 @@ func ErrorRespToObjectError(err error, params ...string) error {
 		err = PartTooSmall{}
 	}
 
+	switch minioErr.StatusCode {
+	case http.StatusMethodNotAllowed:
+		err = toObjectErr(errMethodNotAllowed, bucket, object)
+	case http.StatusBadGateway:
+		return BackendDown{Err: err.Error()}
+	}
 	return err
 }
 
@@ -384,7 +393,7 @@ func gatewayHandleEnvVars() {
 
 // shouldMeterRequest checks whether incoming request should be added to prometheus gateway metrics
 func shouldMeterRequest(req *http.Request) bool {
-	return !(guessIsBrowserReq(req) || guessIsHealthCheckReq(req) || guessIsMetricsReq(req))
+	return req.URL != nil && !strings.HasPrefix(req.URL.Path, minioReservedBucketPath+slashSeparator)
 }
 
 // MetricsTransport is a custom wrapper around Transport to track metrics

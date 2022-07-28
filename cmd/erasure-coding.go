@@ -28,7 +28,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/klauspost/reedsolomon"
-	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/internal/logger"
 )
 
 // Erasure - erasure encoding details.
@@ -41,7 +41,7 @@ type Erasure struct {
 // NewErasure creates a new ErasureStorage.
 func NewErasure(ctx context.Context, dataBlocks, parityBlocks int, blockSize int64) (e Erasure, err error) {
 	// Check the parameters for sanity now.
-	if dataBlocks <= 0 || parityBlocks <= 0 {
+	if dataBlocks <= 0 || parityBlocks < 0 {
 		return e, reedsolomon.ErrInvShardNum
 	}
 
@@ -94,8 +94,8 @@ func (e *Erasure) EncodeData(ctx context.Context, data []byte) ([][]byte, error)
 // It only decodes the data blocks but does not verify them.
 // It returns an error if the decoding failed.
 func (e *Erasure) DecodeDataBlocks(data [][]byte) error {
-	var isZero = 0
-	for _, b := range data[:] {
+	isZero := 0
+	for _, b := range data {
 		if len(b) == 0 {
 			isZero++
 			break

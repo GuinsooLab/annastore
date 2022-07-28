@@ -25,16 +25,15 @@ import (
 	"path"
 	"testing"
 
-	"github.com/minio/minio/pkg/lock"
+	"github.com/minio/minio/internal/lock"
 )
 
 func TestFSRenameFile(t *testing.T) {
 	// create xlStorage test setup
-	_, path, err := newXLStorageTestSetup()
+	_, path, err := newXLStorageTestSetup(t)
 	if err != nil {
 		t.Fatalf("Unable to create xlStorage test setup, %s", err)
 	}
-	defer os.RemoveAll(path)
 
 	if err = fsMkdir(GlobalContext, pathJoin(path, "testvolume1")); err != nil {
 		t.Fatal(err)
@@ -55,11 +54,10 @@ func TestFSRenameFile(t *testing.T) {
 
 func TestFSStats(t *testing.T) {
 	// create xlStorage test setup
-	_, path, err := newXLStorageTestSetup()
+	_, path, err := newXLStorageTestSetup(t)
 	if err != nil {
 		t.Fatalf("Unable to create xlStorage test setup, %s", err)
 	}
-	defer os.RemoveAll(path)
 
 	// Setup test environment.
 
@@ -75,7 +73,7 @@ func TestFSStats(t *testing.T) {
 		t.Fatalf("Unable to create volume, %s", err)
 	}
 
-	var reader = bytes.NewReader([]byte("Hello, world"))
+	reader := bytes.NewReader([]byte("Hello, world"))
 	if _, err = fsCreateFile(GlobalContext, pathJoin(path, "success-vol", "success-file"), reader, 0); err != nil {
 		t.Fatalf("Unable to create file, %s", err)
 	}
@@ -183,11 +181,10 @@ func TestFSStats(t *testing.T) {
 
 func TestFSCreateAndOpen(t *testing.T) {
 	// Setup test environment.
-	_, path, err := newXLStorageTestSetup()
+	_, path, err := newXLStorageTestSetup(t)
 	if err != nil {
 		t.Fatalf("Unable to create xlStorage test setup, %s", err)
 	}
-	defer os.RemoveAll(path)
 
 	if err = fsMkdir(GlobalContext, pathJoin(path, "success-vol")); err != nil {
 		t.Fatalf("Unable to create directory, %s", err)
@@ -201,7 +198,7 @@ func TestFSCreateAndOpen(t *testing.T) {
 		t.Fatal("Unexpected error", err)
 	}
 
-	var reader = bytes.NewReader([]byte("Hello, world"))
+	reader := bytes.NewReader([]byte("Hello, world"))
 	if _, err = fsCreateFile(GlobalContext, pathJoin(path, "success-vol", "success-file"), reader, 0); err != nil {
 		t.Fatalf("Unable to create file, %s", err)
 	}
@@ -248,18 +245,17 @@ func TestFSCreateAndOpen(t *testing.T) {
 
 func TestFSDeletes(t *testing.T) {
 	// create xlStorage test setup
-	_, path, err := newXLStorageTestSetup()
+	_, path, err := newXLStorageTestSetup(t)
 	if err != nil {
 		t.Fatalf("Unable to create xlStorage test setup, %s", err)
 	}
-	defer os.RemoveAll(path)
 
 	// Setup test environment.
 	if err = fsMkdir(GlobalContext, pathJoin(path, "success-vol")); err != nil {
 		t.Fatalf("Unable to create directory, %s", err)
 	}
 
-	var reader = bytes.NewReader([]byte("Hello, world"))
+	reader := bytes.NewReader([]byte("Hello, world"))
 	if _, err = fsCreateFile(GlobalContext, pathJoin(path, "success-vol", "success-file"), reader, reader.Size()); err != nil {
 		t.Fatalf("Unable to create file, %s", err)
 	}
@@ -271,7 +267,7 @@ func TestFSDeletes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = ioutil.WriteFile(pathJoin(path, "success-vol", "not-empty", "file"), []byte("data"), 0777)
+	err = ioutil.WriteFile(pathJoin(path, "success-vol", "not-empty", "file"), []byte("data"), 0o777)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,11 +346,10 @@ func TestFSDeletes(t *testing.T) {
 
 func BenchmarkFSDeleteFile(b *testing.B) {
 	// create xlStorage test setup
-	_, path, err := newXLStorageTestSetup()
+	_, path, err := newXLStorageTestSetup(b)
 	if err != nil {
 		b.Fatalf("Unable to create xlStorage test setup, %s", err)
 	}
-	defer os.RemoveAll(path)
 
 	// Setup test environment.
 	if err = fsMkdir(GlobalContext, pathJoin(path, "benchmark")); err != nil {
@@ -368,7 +363,7 @@ func BenchmarkFSDeleteFile(b *testing.B) {
 	// We need to create and delete the file sequentially inside the benchmark.
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
-		err = ioutil.WriteFile(filename, []byte("data"), 0777)
+		err = ioutil.WriteFile(filename, []byte("data"), 0o777)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -384,18 +379,17 @@ func BenchmarkFSDeleteFile(b *testing.B) {
 // Tests fs removes.
 func TestFSRemoves(t *testing.T) {
 	// create xlStorage test setup
-	_, path, err := newXLStorageTestSetup()
+	_, path, err := newXLStorageTestSetup(t)
 	if err != nil {
 		t.Fatalf("Unable to create xlStorage test setup, %s", err)
 	}
-	defer os.RemoveAll(path)
 
 	// Setup test environment.
 	if err = fsMkdir(GlobalContext, pathJoin(path, "success-vol")); err != nil {
 		t.Fatalf("Unable to create directory, %s", err)
 	}
 
-	var reader = bytes.NewReader([]byte("Hello, world"))
+	reader := bytes.NewReader([]byte("Hello, world"))
 	if _, err = fsCreateFile(GlobalContext, pathJoin(path, "success-vol", "success-file"), reader, 0); err != nil {
 		t.Fatalf("Unable to create file, %s", err)
 	}
@@ -501,11 +495,10 @@ func TestFSRemoves(t *testing.T) {
 
 func TestFSRemoveMeta(t *testing.T) {
 	// create xlStorage test setup
-	_, fsPath, err := newXLStorageTestSetup()
+	_, fsPath, err := newXLStorageTestSetup(t)
 	if err != nil {
 		t.Fatalf("Unable to create xlStorage test setup, %s", err)
 	}
-	defer os.RemoveAll(fsPath)
 
 	// Setup test environment.
 	if err = fsMkdir(GlobalContext, pathJoin(fsPath, "success-vol")); err != nil {
@@ -514,7 +507,7 @@ func TestFSRemoveMeta(t *testing.T) {
 
 	filePath := pathJoin(fsPath, "success-vol", "success-file")
 
-	var reader = bytes.NewReader([]byte("Hello, world"))
+	reader := bytes.NewReader([]byte("Hello, world"))
 	if _, err = fsCreateFile(GlobalContext, filePath, reader, 0); err != nil {
 		t.Fatalf("Unable to create file, %s", err)
 	}
@@ -529,10 +522,7 @@ func TestFSRemoveMeta(t *testing.T) {
 
 	defer rwPool.Close(filePath)
 
-	tmpDir, tmpErr := ioutil.TempDir(globalTestTmpDir, "minio-")
-	if tmpErr != nil {
-		t.Fatal(tmpErr)
-	}
+	tmpDir := t.TempDir()
 
 	if err := fsRemoveMeta(GlobalContext, fsPath, filePath, tmpDir); err != nil {
 		t.Fatalf("Unable to remove file, %s", err)
@@ -548,15 +538,9 @@ func TestFSRemoveMeta(t *testing.T) {
 }
 
 func TestFSIsFile(t *testing.T) {
-	dirPath, err := ioutil.TempDir(globalTestTmpDir, "minio-")
-	if err != nil {
-		t.Fatalf("Unable to create tmp directory %s", err)
-	}
-	defer os.RemoveAll(dirPath)
+	filePath := pathJoin(t.TempDir(), "tmpfile")
 
-	filePath := pathJoin(dirPath, "tmpfile")
-
-	if err = ioutil.WriteFile(filePath, nil, 0777); err != nil {
+	if err := ioutil.WriteFile(filePath, nil, 0o777); err != nil {
 		t.Fatalf("Unable to create file %s", filePath)
 	}
 

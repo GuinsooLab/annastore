@@ -1,6 +1,6 @@
 # Disk Cache Quickstart Guide [![Slack](https://slack.min.io/slack?type=svg)](https://slack.min.io)
 
-Disk caching feature here refers to the use of caching disks to store content closer to the tenants. For instance, if you access an object from a lets say `gateway azure` setup and download the object that gets cached, each subsequent request on the object gets served directly from the cache drives until it expires. This feature allows MinIO users to have
+Disk caching feature here refers to the use of caching disks to store content closer to the tenants. For instance, if you access an object from a lets say `gateway s3` setup and download the object that gets cached, each subsequent request on the object gets served directly from the cache drives until it expires. This feature allows MinIO users to have
 
 - Object to be delivered with the best possible performance.
 - Dramatic improvements for time to first byte for any object.
@@ -29,15 +29,14 @@ export MINIO_CACHE_WATERMARK_HIGH=90
 minio gateway s3
 ```
 
-The `CACHE_WATERMARK` numbers are percentages of `CACHE_QUOTA`. 
-In the example above this means that  `MINIO_CACHE_WATERMARK_LOW` is effectively `0.8 * 0.7 * 100 = 56%` and the `MINIO_CACHE_WATERMARK_HIGH` is effectively `0.8 * 0.9 * 100 = 72%` of total disk space.     
-
+The `CACHE_WATERMARK` numbers are percentages of `CACHE_QUOTA`.
+In the example above this means that  `MINIO_CACHE_WATERMARK_LOW` is effectively `0.8 * 0.7 * 100 = 56%` and the `MINIO_CACHE_WATERMARK_HIGH` is effectively `0.8 * 0.9 * 100 = 72%` of total disk space.
 
 ### 3. Test your setup
 
 To test this setup, access the MinIO gateway via browser or [`mc`](https://docs.min.io/docs/minio-client-quickstart-guide). You’ll see the uploaded files are accessible from all the MinIO endpoints.
 
-# Explore Further
+## Explore Further
 
 - [Disk cache design](https://github.com/minio/minio/blob/master/docs/disk-caching/DESIGN.md)
 - [Use `mc` with MinIO Server](https://docs.min.io/docs/minio-client-quickstart-guide)

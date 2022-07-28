@@ -21,10 +21,14 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/dustin/go-humanize"
 	jsoniter "github.com/json-iterator/go"
+	xhttp "github.com/minio/minio/internal/http"
 )
 
 func TestIsXLMetaFormatValid(t *testing.T) {
@@ -58,13 +62,15 @@ func TestIsXLMetaErasureInfoValid(t *testing.T) {
 		{1, 5, 6, false},
 		{2, 5, 5, true},
 		{3, 0, 5, false},
-		{4, 5, 0, false},
-		{5, 5, 0, false},
-		{6, 5, 4, true},
+		{3, -1, 5, false},
+		{4, 5, -1, false},
+		{5, 5, 0, true},
+		{6, 5, 0, true},
+		{7, 5, 4, true},
 	}
 	for _, tt := range tests {
 		if got := isXLMetaErasureInfoValid(tt.data, tt.parity); got != tt.want {
-			t.Errorf("Test %d: Expected %v but received %v", tt.name, got, tt.want)
+			t.Errorf("Test %d: Expected %v but received %v -> %#v", tt.name, got, tt.want, tt)
 		}
 	}
 }
@@ -234,7 +240,7 @@ func TestGetXLMetaV1Jsoniter1(t *testing.T) {
 	}
 
 	var jsoniterXLMeta xlMetaV1Object
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	if err := json.Unmarshal(xlMetaJSON, &jsoniterXLMeta); err != nil {
 		t.Errorf("jsoniter parsing of XLMeta failed: %v", err)
 	}
@@ -244,7 +250,6 @@ func TestGetXLMetaV1Jsoniter1(t *testing.T) {
 // Tests the correctness of constructing XLMetaV1 using jsoniter lib for XLMetaV1 of size 10 parts.
 // The result will be compared with the result obtained from json.unMarshal of the byte data.
 func TestGetXLMetaV1Jsoniter10(t *testing.T) {
-
 	xlMetaJSON := getXLMetaBytes(10)
 
 	var unMarshalXLMeta xlMetaV1Object
@@ -253,7 +258,7 @@ func TestGetXLMetaV1Jsoniter10(t *testing.T) {
 	}
 
 	var jsoniterXLMeta xlMetaV1Object
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	if err := json.Unmarshal(xlMetaJSON, &jsoniterXLMeta); err != nil {
 		t.Errorf("jsoniter parsing of XLMeta failed: %v", err)
 	}
@@ -315,5 +320,225 @@ func TestGetPartSizeFromIdx(t *testing.T) {
 		if err != nil && err != testCaseFailure.err {
 			t.Errorf("Test %d: Expected err %s, but got %s", i+1, testCaseFailure.err, err)
 		}
+	}
+}
+
+func BenchmarkXlMetaV2Shallow(b *testing.B) {
+	fi := FileInfo{
+		Volume:           "volume",
+		Name:             "object-name",
+		VersionID:        "756100c6-b393-4981-928a-d49bbc164741",
+		IsLatest:         true,
+		Deleted:          false,
+		TransitionStatus: "PENDING",
+		DataDir:          "bffea160-ca7f-465f-98bc-9b4f1c3ba1ef",
+		XLV1:             false,
+		ModTime:          time.Now(),
+		Size:             1234456,
+		Mode:             0,
+		Metadata: map[string]string{
+			xhttp.AmzRestore:                 "FAILED",
+			xhttp.ContentMD5:                 mustGetUUID(),
+			xhttp.AmzBucketReplicationStatus: "PENDING",
+			xhttp.ContentType:                "application/json",
+		},
+		Parts: []ObjectPartInfo{
+			{
+				Number:     1,
+				Size:       1234345,
+				ActualSize: 1234345,
+			},
+			{
+				Number:     2,
+				Size:       1234345,
+				ActualSize: 1234345,
+			},
+		},
+		Erasure: ErasureInfo{
+			Algorithm:    ReedSolomon.String(),
+			DataBlocks:   4,
+			ParityBlocks: 2,
+			BlockSize:    10000,
+			Index:        1,
+			Distribution: []int{1, 2, 3, 4, 5, 6, 7, 8},
+			Checksums: []ChecksumInfo{
+				{
+					PartNumber: 1,
+					Algorithm:  HighwayHash256S,
+					Hash:       nil,
+				},
+				{
+					PartNumber: 2,
+					Algorithm:  HighwayHash256S,
+					Hash:       nil,
+				},
+			},
+		},
+	}
+	for _, size := range []int{1, 10, 1000, 100_000} {
+		b.Run(fmt.Sprint(size, "-versions"), func(b *testing.B) {
+			var xl xlMetaV2
+			ids := make([]string, size)
+			for i := 0; i < size; i++ {
+				fi.VersionID = mustGetUUID()
+				fi.DataDir = mustGetUUID()
+				ids[i] = fi.VersionID
+				fi.ModTime = fi.ModTime.Add(-time.Second)
+				xl.AddVersion(fi)
+			}
+			// Encode all. This is used for benchmarking.
+			enc, err := xl.AppendTo(nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Logf("Serialized size: %d bytes", len(enc))
+			rng := rand.New(rand.NewSource(0))
+			dump := make([]byte, len(enc))
+			b.Run("UpdateObjectVersion", func(b *testing.B) {
+				b.SetBytes(int64(size))
+				b.ResetTimer()
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					// Load...
+					xl = xlMetaV2{}
+					err := xl.Load(enc)
+					if err != nil {
+						b.Fatal(err)
+					}
+					// Update modtime for resorting...
+					fi.ModTime = fi.ModTime.Add(-time.Second)
+					// Update a random version.
+					fi.VersionID = ids[rng.Intn(size)]
+					// Update...
+					err = xl.UpdateObjectVersion(fi)
+					if err != nil {
+						b.Fatal(err)
+					}
+					// Save...
+					dump, err = xl.AppendTo(dump[:0])
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("DeleteVersion", func(b *testing.B) {
+				b.SetBytes(int64(size))
+				b.ResetTimer()
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					// Load...
+					xl = xlMetaV2{}
+					err := xl.Load(enc)
+					if err != nil {
+						b.Fatal(err)
+					}
+					// Update a random version.
+					fi.VersionID = ids[rng.Intn(size)]
+					// Delete...
+					_, err = xl.DeleteVersion(fi)
+					if err != nil {
+						b.Fatal(err)
+					}
+					// Save...
+					dump, err = xl.AppendTo(dump[:0])
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("AddVersion", func(b *testing.B) {
+				b.SetBytes(int64(size))
+				b.ResetTimer()
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					// Load...
+					xl = xlMetaV2{}
+					err := xl.Load(enc)
+					if err != nil {
+						b.Fatal(err)
+					}
+					// Update modtime for resorting...
+					fi.ModTime = fi.ModTime.Add(-time.Second)
+					// Update a random version.
+					fi.VersionID = mustGetUUID()
+					// Add...
+					err = xl.AddVersion(fi)
+					if err != nil {
+						b.Fatal(err)
+					}
+					// Save...
+					dump, err = xl.AppendTo(dump[:0])
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("ToFileInfo", func(b *testing.B) {
+				b.SetBytes(int64(size))
+				b.ResetTimer()
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					// Load...
+					xl = xlMetaV2{}
+					err := xl.Load(enc)
+					if err != nil {
+						b.Fatal(err)
+					}
+					// List...
+					_, err = xl.ToFileInfo("volume", "path", ids[rng.Intn(size)])
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("ListVersions", func(b *testing.B) {
+				b.SetBytes(int64(size))
+				b.ResetTimer()
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					// Load...
+					xl = xlMetaV2{}
+					err := xl.Load(enc)
+					if err != nil {
+						b.Fatal(err)
+					}
+					// List...
+					_, err = xl.ListVersions("volume", "path")
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("ToFileInfoNew", func(b *testing.B) {
+				b.SetBytes(int64(size))
+				b.ResetTimer()
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					buf, _, _ := isIndexedMetaV2(enc)
+					if buf == nil {
+						b.Fatal("buf == nil")
+					}
+					_, err = buf.ToFileInfo("volume", "path", ids[rng.Intn(size)])
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("ListVersionsNew", func(b *testing.B) {
+				b.SetBytes(int64(size))
+				b.ResetTimer()
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					buf, _, _ := isIndexedMetaV2(enc)
+					if buf == nil {
+						b.Fatal("buf == nil")
+					}
+					_, err = buf.ListVersions("volume", "path")
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		})
 	}
 }

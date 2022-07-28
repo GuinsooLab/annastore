@@ -36,9 +36,9 @@ type WarmBackendGetOpts struct {
 
 // WarmBackend provides interface to be implemented by remote tier backends
 type WarmBackend interface {
-	Put(ctx context.Context, object string, r io.Reader, length int64) error
-	Get(ctx context.Context, object string, opts WarmBackendGetOpts) (io.ReadCloser, error)
-	Remove(ctx context.Context, object string) error
+	Put(ctx context.Context, object string, r io.Reader, length int64) (remoteVersionID, error)
+	Get(ctx context.Context, object string, rv remoteVersionID, opts WarmBackendGetOpts) (io.ReadCloser, error)
+	Remove(ctx context.Context, object string, rv remoteVersionID) error
 	InUse(ctx context.Context) (bool, error)
 }
 
@@ -48,16 +48,24 @@ const probeObject = "probeobject"
 // to perform all operations defined in the WarmBackend interface.
 func checkWarmBackend(ctx context.Context, w WarmBackend) error {
 	var empty bytes.Reader
-	err := w.Put(ctx, probeObject, &empty, 0)
+	rv, err := w.Put(ctx, probeObject, &empty, 0)
 	if err != nil {
+		switch err.(type) {
+		case BackendDown:
+			return err
+		}
 		return tierPermErr{
 			Op:  tierPut,
 			Err: err,
 		}
 	}
 
-	_, err = w.Get(ctx, probeObject, WarmBackendGetOpts{})
+	_, err = w.Get(ctx, probeObject, rv, WarmBackendGetOpts{})
 	if err != nil {
+		switch err.(type) {
+		case BackendDown:
+			return err
+		}
 		switch {
 		case isErrBucketNotFound(err):
 			return errTierBucketNotFound
@@ -71,7 +79,11 @@ func checkWarmBackend(ctx context.Context, w WarmBackend) error {
 		}
 	}
 
-	if err = w.Remove(ctx, probeObject); err != nil {
+	if err = w.Remove(ctx, probeObject, rv); err != nil {
+		switch err.(type) {
+		case BackendDown:
+			return err
+		}
 		return tierPermErr{
 			Op:  tierDelete,
 			Err: err,
@@ -115,6 +127,10 @@ func errIsTierPermError(err error) bool {
 	return errors.As(err, &tpErr)
 }
 
+// remoteVersionID represents the version id of an object in the remote tier.
+// Its usage is remote tier cloud implementation specific.
+type remoteVersionID string
+
 // newWarmBackend instantiates the tier type specific WarmBackend, runs
 // checkWarmBackend on it.
 func newWarmBackend(ctx context.Context, tier madmin.TierConfig) (d WarmBackend, err error) {
@@ -125,6 +141,8 @@ func newWarmBackend(ctx context.Context, tier madmin.TierConfig) (d WarmBackend,
 		d, err = newWarmBackendAzure(*tier.Azure)
 	case madmin.GCS:
 		d, err = newWarmBackendGCS(*tier.GCS)
+	case madmin.MinIO:
+		d, err = newWarmBackendMinIO(*tier.MinIO)
 	default:
 		return nil, errTierTypeUnsupported
 	}

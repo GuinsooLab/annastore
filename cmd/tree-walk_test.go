@@ -20,8 +20,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
-	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -137,17 +135,15 @@ func testTreeWalkMarker(t *testing.T, listDir ListDirFunc, isLeaf IsLeafFunc, is
 
 // Test tree-walk.
 func TestTreeWalk(t *testing.T) {
-	fsDir, err := ioutil.TempDir(globalTestTmpDir, "minio-")
-	if err != nil {
-		t.Fatalf("Unable to create tmp directory: %s", err)
-	}
+	fsDir := t.TempDir()
+
 	endpoints := mustGetNewEndpoints(fsDir)
 	disk, err := newStorageAPI(endpoints[0])
 	if err != nil {
 		t.Fatalf("Unable to create StorageAPI: %s", err)
 	}
 
-	var files = []string{
+	files := []string{
 		"d/e",
 		"d/f",
 		"d/g/h",
@@ -175,19 +171,11 @@ func TestTreeWalk(t *testing.T) {
 
 	// Simple test when marker is set.
 	testTreeWalkMarker(t, listDir, isLeaf, isLeafDir)
-
-	err = os.RemoveAll(fsDir)
-	if err != nil {
-		t.Fatal(err)
-	}
 }
 
 // Test if tree walk go-routine exits cleanly if tree walk is aborted because of timeout.
 func TestTreeWalkTimeout(t *testing.T) {
-	fsDir, err := ioutil.TempDir(globalTestTmpDir, "minio-")
-	if err != nil {
-		t.Fatalf("Unable to create tmp directory: %s", err)
-	}
+	fsDir := t.TempDir()
 	endpoints := mustGetNewEndpoints(fsDir)
 	disk, err := newStorageAPI(endpoints[0])
 	if err != nil {
@@ -250,20 +238,13 @@ func TestTreeWalkTimeout(t *testing.T) {
 	if ok {
 		t.Error("Tree-walk go routine has not exited after timeout.")
 	}
-	err = os.RemoveAll(fsDir)
-	if err != nil {
-		t.Error(err)
-	}
 }
 
 // TestRecursiveWalk - tests if treeWalk returns entries correctly with and
 // without recursively traversing prefixes.
 func TestRecursiveTreeWalk(t *testing.T) {
 	// Create a backend directories fsDir1.
-	fsDir1, err := ioutil.TempDir(globalTestTmpDir, "minio-")
-	if err != nil {
-		t.Fatalf("Unable to create tmp directory: %s", err)
-	}
+	fsDir1 := t.TempDir()
 
 	endpoints := mustGetNewEndpoints(fsDir1)
 	disk1, err := newStorageAPI(endpoints[0])
@@ -284,7 +265,7 @@ func TestRecursiveTreeWalk(t *testing.T) {
 	listDir := listDirFactory(context.Background(), disk1, isLeaf)
 
 	// Create the namespace.
-	var files = []string{
+	files := []string{
 		"d/e",
 		"d/f",
 		"d/g/h",
@@ -366,18 +347,11 @@ func TestRecursiveTreeWalk(t *testing.T) {
 			}
 		})
 	}
-	err = os.RemoveAll(fsDir1)
-	if err != nil {
-		t.Error(err)
-	}
 }
 
 func TestSortedness(t *testing.T) {
 	// Create a backend directories fsDir1.
-	fsDir1, err := ioutil.TempDir(globalTestTmpDir, "minio-")
-	if err != nil {
-		t.Errorf("Unable to create tmp directory: %s", err)
-	}
+	fsDir1 := t.TempDir()
 
 	endpoints := mustGetNewEndpoints(fsDir1)
 	disk1, err := newStorageAPI(endpoints[0])
@@ -398,7 +372,7 @@ func TestSortedness(t *testing.T) {
 	listDir := listDirFactory(context.Background(), disk1, isLeaf)
 
 	// Create the namespace.
-	var files = []string{
+	files := []string{
 		"d/e",
 		"d/f",
 		"d/g/h",
@@ -444,20 +418,11 @@ func TestSortedness(t *testing.T) {
 			t.Error(i+1, "Expected entries to be sort, but it wasn't")
 		}
 	}
-
-	// Remove directory created for testing
-	err = os.RemoveAll(fsDir1)
-	if err != nil {
-		t.Error(err)
-	}
 }
 
 func TestTreeWalkIsEnd(t *testing.T) {
 	// Create a backend directories fsDir1.
-	fsDir1, err := ioutil.TempDir(globalTestTmpDir, "minio-")
-	if err != nil {
-		t.Errorf("Unable to create tmp directory: %s", err)
-	}
+	fsDir1 := t.TempDir()
 
 	endpoints := mustGetNewEndpoints(fsDir1)
 	disk1, err := newStorageAPI(endpoints[0])
@@ -478,7 +443,7 @@ func TestTreeWalkIsEnd(t *testing.T) {
 	listDir := listDirFactory(context.Background(), disk1, isLeaf)
 
 	// Create the namespace.
-	var files = []string{
+	files := []string{
 		"d/e",
 		"d/f",
 		"d/g/h",
@@ -525,11 +490,5 @@ func TestTreeWalkIsEnd(t *testing.T) {
 		if !entry.end {
 			t.Errorf("Test %d: Last entry %s, doesn't have EOF marker set", i, entry.entry)
 		}
-	}
-
-	// Remove directory created for testing
-	err = os.RemoveAll(fsDir1)
-	if err != nil {
-		t.Error(err)
 	}
 }

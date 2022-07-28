@@ -24,7 +24,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
-	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/internal/logger"
 )
 
 // Checks on GetObject arguments, bucket and object.
@@ -198,12 +198,12 @@ func checkPutObjectArgs(ctx context.Context, bucket, object string, obj getBucke
 }
 
 type getBucketInfoI interface {
-	GetBucketInfo(ctx context.Context, bucket string) (bucketInfo BucketInfo, err error)
+	GetBucketInfo(ctx context.Context, bucket string, opts BucketOptions) (bucketInfo BucketInfo, err error)
 }
 
 // Checks whether bucket exists and returns appropriate error if not.
 func checkBucketExist(ctx context.Context, bucket string, obj getBucketInfoI) error {
-	_, err := obj.GetBucketInfo(ctx, bucket)
+	_, err := obj.GetBucketInfo(ctx, bucket, BucketOptions{})
 	if err != nil {
 		return err
 	}

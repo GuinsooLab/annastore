@@ -20,6 +20,8 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"path"
 	"sort"
 	"strings"
@@ -27,14 +29,14 @@ import (
 
 	jsoniter "github.com/json-iterator/go"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/cmd/config"
-	"github.com/minio/minio/pkg/kms"
+	"github.com/minio/minio/internal/config"
+	"github.com/minio/minio/internal/kms"
 )
 
 const (
 	minioConfigPrefix = "config"
-
-	kvPrefix = ".kv"
+	minioConfigBucket = minioMetaBucket + SlashSeparator + minioConfigPrefix
+	kvPrefix          = ".kv"
 
 	// Captures all the previous SetKV operations and allows rollback.
 	minioConfigHistoryPrefix = minioConfigPrefix + "/history"
@@ -44,8 +46,8 @@ const (
 )
 
 func listServerConfigHistory(ctx context.Context, objAPI ObjectLayer, withData bool, count int) (
-	[]madmin.ConfigHistoryEntry, error) {
-
+	[]madmin.ConfigHistoryEntry, error,
+) {
 	var configHistory []madmin.ConfigHistoryEntry
 
 	// List all kvs
@@ -95,7 +97,9 @@ func listServerConfigHistory(ctx context.Context, objAPI ObjectLayer, withData b
 
 func delServerConfigHistory(ctx context.Context, objAPI ObjectLayer, uuidKV string) error {
 	historyFile := pathJoin(minioConfigHistoryPrefix, uuidKV+kvPrefix)
-	_, err := objAPI.DeleteObject(ctx, minioMetaBucket, historyFile, ObjectOptions{})
+	_, err := objAPI.DeleteObject(ctx, minioMetaBucket, historyFile, ObjectOptions{
+		DeletePrefix: true,
+	})
 	return err
 }
 
@@ -136,7 +140,7 @@ func saveServerConfig(ctx context.Context, objAPI ObjectLayer, cfg interface{}) 
 		return err
 	}
 
-	var configFile = path.Join(minioConfigPrefix, minioConfigFile)
+	configFile := path.Join(minioConfigPrefix, minioConfigFile)
 	if GlobalKMS != nil {
 		data, err = config.EncryptBytes(GlobalKMS, data, kms.Context{
 			minioMetaBucket: path.Join(minioMetaBucket, configFile),
@@ -149,13 +153,13 @@ func saveServerConfig(ctx context.Context, objAPI ObjectLayer, cfg interface{}) 
 }
 
 func readServerConfig(ctx context.Context, objAPI ObjectLayer) (config.Config, error) {
+	srvCfg := config.New()
 	configFile := path.Join(minioConfigPrefix, minioConfigFile)
 	data, err := readConfig(ctx, objAPI, configFile)
 	if err != nil {
-		// Config not found for some reason, allow things to continue
-		// by initializing a new fresh config in safe mode.
-		if err == errConfigNotFound && newObjectLayerFn() == nil {
-			return newServerConfig(), nil
+		if errors.Is(err, errConfigNotFound) {
+			lookupConfigs(srvCfg, objAPI)
+			return srvCfg, nil
 		}
 		return nil, err
 	}
@@ -165,12 +169,12 @@ func readServerConfig(ctx context.Context, objAPI ObjectLayer) (config.Config, e
 			minioMetaBucket: path.Join(minioMetaBucket, configFile),
 		})
 		if err != nil {
+			lookupConfigs(srvCfg, objAPI)
 			return nil, err
 		}
 	}
 
-	var srvCfg = config.New()
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	if err = json.Unmarshal(data, &srvCfg); err != nil {
 		return nil, err
 	}
@@ -181,11 +185,6 @@ func readServerConfig(ctx context.Context, objAPI ObjectLayer) (config.Config, e
 
 // ConfigSys - config system.
 type ConfigSys struct{}
-
-// Load - load config.json.
-func (sys *ConfigSys) Load(objAPI ObjectLayer) error {
-	return sys.Init(objAPI)
-}
 
 // Init - initializes config system from config.json.
 func (sys *ConfigSys) Init(objAPI ObjectLayer) error {
@@ -219,18 +218,18 @@ func initConfig(objAPI ObjectLayer) error {
 	// If etcd is set then migrates /config/config.json
 	// to '<export_path>/.minio.sys/config/config.json'
 	if err := migrateConfigToMinioSys(objAPI); err != nil {
-		return err
+		return fmt.Errorf("migrateConfigToMinioSys: %w", err)
 	}
 
 	// Migrates backend '<export_path>/.minio.sys/config/config.json' to latest version.
 	if err := migrateMinioSysConfig(objAPI); err != nil {
-		return err
+		return fmt.Errorf("migrateMinioSysConfig: %w", err)
 	}
 
 	// Migrates backend '<export_path>/.minio.sys/config/config.json' to
 	// latest config format.
 	if err := migrateMinioSysConfigToKV(objAPI); err != nil {
-		return err
+		return fmt.Errorf("migrateMinioSysConfigToKV: %w", err)
 	}
 
 	return loadConfig(objAPI)

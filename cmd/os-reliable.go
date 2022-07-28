@@ -104,7 +104,7 @@ func reliableMkdirAll(dirPath string, mode os.FileMode) (err error) {
 	i := 0
 	for {
 		// Creates all the parent directories, with mode 0777 mkdir honors system umask.
-		if err = MkdirAll(dirPath, mode); err != nil {
+		if err = osMkdirAll(dirPath, mode); err != nil {
 			// Retry only for the first retryable error.
 			if osIsNotExist(err) && i == 0 {
 				i++
@@ -136,7 +136,7 @@ func renameAll(srcFilePath, dstFilePath string) (err error) {
 		switch {
 		case isSysErrNotDir(err) && !osIsNotExist(err):
 			// Windows can have both isSysErrNotDir(err) and osIsNotExist(err) returning
-			// true if the source file path contains an inexistant directory. In that case,
+			// true if the source file path contains an non-existent directory. In that case,
 			// we want to return errFileNotFound instead, which will honored in subsequent
 			// switch cases
 			return errFileAccessDenied
@@ -163,9 +163,10 @@ func renameAll(srcFilePath, dstFilePath string) (err error) {
 // Reliably retries os.RenameAll if for some reason os.RenameAll returns
 // syscall.ENOENT (parent does not exist).
 func reliableRename(srcFilePath, dstFilePath string) (err error) {
-	if err = reliableMkdirAll(path.Dir(dstFilePath), 0777); err != nil {
+	if err = reliableMkdirAll(path.Dir(dstFilePath), 0o777); err != nil {
 		return err
 	}
+
 	i := 0
 	for {
 		// After a successful parent directory create attempt a renameAll.

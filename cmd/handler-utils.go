@@ -25,18 +25,17 @@ import (
 	"io"
 	"io/ioutil"
 	"mime/multipart"
-	"net"
 	"net/http"
 	"net/textproto"
-	"net/url"
 	"regexp"
 	"strings"
 
 	"github.com/minio/madmin-go"
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/auth"
-	"github.com/minio/minio/pkg/handlers"
+	"github.com/minio/minio/internal/auth"
+	"github.com/minio/minio/internal/handlers"
+	xhttp "github.com/minio/minio/internal/http"
+	"github.com/minio/minio/internal/logger"
+	xnet "github.com/minio/pkg/net"
 )
 
 const (
@@ -58,7 +57,7 @@ func parseLocationConstraint(r *http.Request) (location string, s3Error APIError
 	} // else for both err as nil or io.EOF
 	location = locationConstraint.Location
 	if location == "" {
-		location = globalServerRegion
+		location = globalSite.Region
 	}
 	return location, ErrNone
 }
@@ -66,7 +65,7 @@ func parseLocationConstraint(r *http.Request) (location string, s3Error APIError
 // Validates input location is same as configured region
 // of MinIO server.
 func isValidLocation(location string) bool {
-	return globalServerRegion == "" || globalServerRegion == location
+	return globalSite.Region == "" || globalSite.Region == location
 }
 
 // Supported headers that needs to be extracted.
@@ -112,7 +111,7 @@ var userMetadataKeyPrefixes = []string{
 
 // extractMetadata extracts metadata from HTTP header and HTTP queryString.
 func extractMetadata(ctx context.Context, r *http.Request) (metadata map[string]string, err error) {
-	query := r.URL.Query()
+	query := r.Form
 	header := r.Header
 	metadata = make(map[string]string)
 	// Extract all query values.
@@ -197,30 +196,11 @@ func extractMetadataFromMime(ctx context.Context, v textproto.MIMEHeader, m map[
 	return nil
 }
 
-// The Query string for the redirect URL the client is
-// redirected on successful upload.
-func getRedirectPostRawQuery(objInfo ObjectInfo) string {
-	redirectValues := make(url.Values)
-	redirectValues.Set("bucket", objInfo.Bucket)
-	redirectValues.Set("key", objInfo.Name)
-	redirectValues.Set("etag", "\""+objInfo.ETag+"\"")
-	return redirectValues.Encode()
-}
-
 // Returns access credentials in the request Authorization header.
 func getReqAccessCred(r *http.Request, region string) (cred auth.Credentials) {
 	cred, _, _ = getReqAccessKeyV4(r, region, serviceS3)
 	if cred.AccessKey == "" {
 		cred, _, _ = getReqAccessKeyV2(r)
-	}
-	if cred.AccessKey == "" {
-		claims, owner, _ := webRequestAuthenticate(r)
-		if owner {
-			return globalActiveCred
-		}
-		if claims != nil {
-			cred, _ = globalIAMSys.GetUser(claims.AccessKey)
-		}
 	}
 	return cred
 }
@@ -231,7 +211,7 @@ func extractReqParams(r *http.Request) map[string]string {
 		return nil
 	}
 
-	region := globalServerRegion
+	region := globalSite.Region
 	cred := getReqAccessCred(r, region)
 
 	principalID := cred.AccessKey
@@ -246,6 +226,10 @@ func extractReqParams(r *http.Request) map[string]string {
 		"sourceIPAddress": handlers.GetSourceIP(r),
 		// Add more fields here.
 	}
+	if rangeField := r.Header.Get(xhttp.Range); rangeField != "" {
+		m["range"] = rangeField
+	}
+
 	if _, ok := r.Header[xhttp.MinIOSourceReplicationRequest]; ok {
 		m[xhttp.MinIOSourceReplicationRequest] = ""
 	}
@@ -298,7 +282,7 @@ func validateFormFieldSize(ctx context.Context, formValues http.Header) error {
 
 // Extract form fields and file data from a HTTP POST Policy
 func extractPostPolicyFormValues(ctx context.Context, form *multipart.Form) (filePart io.ReadCloser, fileName string, fileSize int64, formValues http.Header, err error) {
-	/// HTML Form values
+	// HTML Form values
 	fileName = ""
 
 	// Canonicalize the form values into http.Header.
@@ -316,7 +300,7 @@ func extractPostPolicyFormValues(ctx context.Context, form *multipart.Form) (fil
 	// an ugly way of handling this situation. Refer here
 	// https://golang.org/src/mime/multipart/formdata.go#L61
 	if len(form.File) == 0 {
-		var b = &bytes.Buffer{}
+		b := &bytes.Buffer{}
 		for _, v := range formValues["File"] {
 			b.WriteString(v)
 		}
@@ -362,30 +346,6 @@ func extractPostPolicyFormValues(ctx context.Context, form *multipart.Form) (fil
 	return filePart, fileName, fileSize, formValues, nil
 }
 
-// Log headers and body.
-func httpTraceAll(f http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if globalTrace.NumSubscribers() == 0 {
-			f.ServeHTTP(w, r)
-			return
-		}
-		trace := Trace(f, true, w, r)
-		globalTrace.Publish(trace)
-	}
-}
-
-// Log only the headers.
-func httpTraceHdrs(f http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if globalTrace.NumSubscribers() == 0 {
-			f.ServeHTTP(w, r)
-			return
-		}
-		trace := Trace(f, false, w, r)
-		globalTrace.Publish(trace)
-	}
-}
-
 func collectAPIStats(api string, f http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		globalHTTPStats.currentS3Requests.Inc(api)
@@ -404,26 +364,25 @@ func getResource(path string, host string, domains []string) (string, error) {
 	if len(domains) == 0 {
 		return path, nil
 	}
+
 	// If virtual-host-style is enabled construct the "resource" properly.
-	if strings.Contains(host, ":") {
-		// In bucket.mydomain.com:9000, strip out :9000
-		var err error
-		if host, _, err = net.SplitHostPort(host); err != nil {
-			reqInfo := (&logger.ReqInfo{}).AppendTags("host", host)
-			reqInfo.AppendTags("path", path)
-			ctx := logger.SetReqInfo(GlobalContext, reqInfo)
-			logger.LogIf(ctx, err)
-			return "", err
-		}
+	xhost, err := xnet.ParseHost(host)
+	if err != nil {
+		reqInfo := (&logger.ReqInfo{}).AppendTags("host", host)
+		reqInfo.AppendTags("path", path)
+		ctx := logger.SetReqInfo(context.Background(), reqInfo)
+		logger.LogIf(ctx, err)
+		return "", err
 	}
+
 	for _, domain := range domains {
-		if host == minioReservedBucket+"."+domain {
+		if xhost.Name == minioReservedBucket+"."+domain {
 			continue
 		}
-		if !strings.HasSuffix(host, "."+domain) {
+		if !strings.HasSuffix(xhost.Name, "."+domain) {
 			continue
 		}
-		bucket := strings.TrimSuffix(host, "."+domain)
+		bucket := strings.TrimSuffix(xhost.Name, "."+domain)
 		return SlashSeparator + pathJoin(bucket, path), nil
 	}
 	return path, nil
@@ -439,56 +398,7 @@ func extractAPIVersion(r *http.Request) string {
 }
 
 func methodNotAllowedHandler(api string) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodOptions {
-			return
-		}
-		version := extractAPIVersion(r)
-		switch {
-		case strings.HasPrefix(r.URL.Path, peerRESTPrefix):
-			desc := fmt.Sprintf("Server expects 'peer' API version '%s', instead found '%s' - *rolling upgrade is not allowed* - please make sure all servers are running the same MinIO version (%s)", peerRESTVersion, version, ReleaseTag)
-			writeErrorResponseString(r.Context(), w, APIError{
-				Code:           "XMinioPeerVersionMismatch",
-				Description:    desc,
-				HTTPStatusCode: http.StatusUpgradeRequired,
-			}, r.URL)
-		case strings.HasPrefix(r.URL.Path, storageRESTPrefix):
-			desc := fmt.Sprintf("Server expects 'storage' API version '%s', instead found '%s' - *rolling upgrade is not allowed* - please make sure all servers are running the same MinIO version (%s)", storageRESTVersion, version, ReleaseTag)
-			writeErrorResponseString(r.Context(), w, APIError{
-				Code:           "XMinioStorageVersionMismatch",
-				Description:    desc,
-				HTTPStatusCode: http.StatusUpgradeRequired,
-			}, r.URL)
-		case strings.HasPrefix(r.URL.Path, lockRESTPrefix):
-			desc := fmt.Sprintf("Server expects 'lock' API version '%s', instead found '%s' - *rolling upgrade is not allowed* - please make sure all servers are running the same MinIO version (%s)", lockRESTVersion, version, ReleaseTag)
-			writeErrorResponseString(r.Context(), w, APIError{
-				Code:           "XMinioLockVersionMismatch",
-				Description:    desc,
-				HTTPStatusCode: http.StatusUpgradeRequired,
-			}, r.URL)
-		case strings.HasPrefix(r.URL.Path, adminPathPrefix):
-			var desc string
-			if version == "v1" {
-				desc = fmt.Sprintf("Server expects client requests with 'admin' API version '%s', found '%s', please upgrade the client to latest releases", madmin.AdminAPIVersion, version)
-			} else if version == madmin.AdminAPIVersion {
-				desc = fmt.Sprintf("This 'admin' API is not supported by server in '%s'", getMinioMode())
-			} else {
-				desc = fmt.Sprintf("Unexpected client 'admin' API version found '%s', expected '%s', please downgrade the client to older releases", version, madmin.AdminAPIVersion)
-			}
-			writeErrorResponseJSON(r.Context(), w, APIError{
-				Code:           "XMinioAdminVersionMismatch",
-				Description:    desc,
-				HTTPStatusCode: http.StatusUpgradeRequired,
-			}, r.URL)
-		default:
-			writeErrorResponse(r.Context(), w, APIError{
-				Code: "BadRequest",
-				Description: fmt.Sprintf("An error occurred when parsing the HTTP request %s at '%s'",
-					r.Method, r.URL.Path),
-				HTTPStatusCode: http.StatusBadRequest,
-			}, r.URL, guessIsBrowserReq(r))
-		}
-	}
+	return errorResponseHandler
 }
 
 // If none of the http routes match respond with appropriate errors
@@ -496,24 +406,21 @@ func errorResponseHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		return
 	}
-	version := extractAPIVersion(r)
+	desc := "Do not upgrade one server at a time - please follow the recommended guidelines mentioned here https://github.com/minio/minio#upgrading-minio for your environment"
 	switch {
 	case strings.HasPrefix(r.URL.Path, peerRESTPrefix):
-		desc := fmt.Sprintf("Server expects 'peer' API version '%s', instead found '%s' - *rolling upgrade is not allowed* - please make sure all servers are running the same MinIO version (%s)", peerRESTVersion, version, ReleaseTag)
 		writeErrorResponseString(r.Context(), w, APIError{
 			Code:           "XMinioPeerVersionMismatch",
 			Description:    desc,
 			HTTPStatusCode: http.StatusUpgradeRequired,
 		}, r.URL)
 	case strings.HasPrefix(r.URL.Path, storageRESTPrefix):
-		desc := fmt.Sprintf("Server expects 'storage' API version '%s', instead found '%s' - *rolling upgrade is not allowed* - please make sure all servers are running the same MinIO version (%s)", storageRESTVersion, version, ReleaseTag)
 		writeErrorResponseString(r.Context(), w, APIError{
 			Code:           "XMinioStorageVersionMismatch",
 			Description:    desc,
 			HTTPStatusCode: http.StatusUpgradeRequired,
 		}, r.URL)
 	case strings.HasPrefix(r.URL.Path, lockRESTPrefix):
-		desc := fmt.Sprintf("Server expects 'lock' API version '%s', instead found '%s' - *rolling upgrade is not allowed* - please make sure all servers are running the same MinIO version (%s)", lockRESTVersion, version, ReleaseTag)
 		writeErrorResponseString(r.Context(), w, APIError{
 			Code:           "XMinioLockVersionMismatch",
 			Description:    desc,
@@ -521,11 +428,13 @@ func errorResponseHandler(w http.ResponseWriter, r *http.Request) {
 		}, r.URL)
 	case strings.HasPrefix(r.URL.Path, adminPathPrefix):
 		var desc string
-		if version == "v1" {
+		version := extractAPIVersion(r)
+		switch version {
+		case "v1", madmin.AdminAPIVersionV2:
 			desc = fmt.Sprintf("Server expects client requests with 'admin' API version '%s', found '%s', please upgrade the client to latest releases", madmin.AdminAPIVersion, version)
-		} else if version == madmin.AdminAPIVersion {
+		case madmin.AdminAPIVersion:
 			desc = fmt.Sprintf("This 'admin' API is not supported by server in '%s'", getMinioMode())
-		} else {
+		default:
 			desc = fmt.Sprintf("Unexpected client 'admin' API version found '%s', expected '%s', please downgrade the client to older releases", version, madmin.AdminAPIVersion)
 		}
 		writeErrorResponseJSON(r.Context(), w, APIError{
@@ -539,9 +448,8 @@ func errorResponseHandler(w http.ResponseWriter, r *http.Request) {
 			Description: fmt.Sprintf("An error occurred when parsing the HTTP request %s at '%s'",
 				r.Method, r.URL.Path),
 			HTTPStatusCode: http.StatusBadRequest,
-		}, r.URL, guessIsBrowserReq(r))
+		}, r.URL)
 	}
-
 }
 
 // gets host name for current node

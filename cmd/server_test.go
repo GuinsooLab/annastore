@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -34,11 +35,11 @@ import (
 
 	humanize "github.com/dustin/go-humanize"
 	"github.com/minio/minio-go/v7/pkg/set"
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/pkg/bucket/policy"
+	xhttp "github.com/minio/minio/internal/http"
+	"github.com/minio/pkg/bucket/policy"
 )
 
-// API suite container common to both FS and Erasure.
+// API suite container common to both ErasureSD and Erasure.
 type TestSuiteCommon struct {
 	serverType string
 	testServer TestServer
@@ -121,12 +122,12 @@ func runAllTests(suite *TestSuiteCommon, c *check) {
 
 func TestServerSuite(t *testing.T) {
 	testCases := []*TestSuiteCommon{
-		// Init and run test on FS backend with signature v4.
-		{serverType: "FS", signer: signerV4},
-		// Init and run test on FS backend with signature v2.
-		{serverType: "FS", signer: signerV2},
-		// Init and run test on FS backend, with tls enabled.
-		{serverType: "FS", signer: signerV4, secure: true},
+		// Init and run test on ErasureSD backend with signature v4.
+		{serverType: "ErasureSD", signer: signerV4},
+		// Init and run test on ErasureSD backend with signature v2.
+		{serverType: "ErasureSD", signer: signerV2},
+		// Init and run test on ErasureSD backend, with tls enabled.
+		{serverType: "ErasureSD", signer: signerV4, secure: true},
 		// Init and run test on Erasure backend.
 		{serverType: "Erasure", signer: signerV4},
 		// Init and run test on ErasureSet backend.
@@ -141,7 +142,7 @@ func TestServerSuite(t *testing.T) {
 }
 
 // Setting up the test suite.
-// Starting the Test server with temporary FS backend.
+// Starting the Test server with temporary backend.
 func (s *TestSuiteCommon) SetUpSuite(c *check) {
 	if s.secure {
 		cert, key, err := generateTLSCertKey("127.0.0.1")
@@ -158,7 +159,27 @@ func (s *TestSuiteCommon) SetUpSuite(c *check) {
 	s.secretKey = s.testServer.SecretKey
 }
 
-// Called implicitly by "gopkg.in/check.v1" after all tests are run.
+func (s *TestSuiteCommon) RestartTestServer(c *check) {
+	// Shutdown.
+	s.testServer.cancel()
+	s.testServer.Server.Close()
+	s.testServer.Obj.Shutdown(context.Background())
+
+	// Restart.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	s.testServer.cancel = cancel
+	s.testServer = initTestServerWithBackend(ctx, c, s.testServer, s.testServer.Obj, s.testServer.rawDiskPaths)
+	if s.secure {
+		s.testServer.Server.StartTLS()
+	} else {
+		s.testServer.Server.Start()
+	}
+
+	s.client = s.testServer.Server.Client()
+	s.endPoint = s.testServer.Server.URL
+}
+
 func (s *TestSuiteCommon) TearDownSuite(c *check) {
 	s.testServer.Stop()
 }
@@ -236,7 +257,6 @@ func (s *TestSuiteCommon) TestCors(c *check) {
 			}
 		}
 	}
-
 }
 
 func (s *TestSuiteCommon) TestObjectDir(c *check) {
@@ -344,7 +364,7 @@ func (s *TestSuiteCommon) TestBucketPolicy(c *check) {
 	// assert the http response status code.
 	c.Assert(response.StatusCode, http.StatusOK)
 
-	/// Put a new bucket policy.
+	// Put a new bucket policy.
 	request, err = newTestSignedRequest(http.MethodPut, getPutPolicyURL(s.endPoint, bucketName),
 		int64(len(bucketPolicyStr)), bytes.NewReader([]byte(bucketPolicyStr)), s.accessKey, s.secretKey, s.signer)
 	c.Assert(err, nil)
@@ -455,7 +475,6 @@ func (s *TestSuiteCommon) TestDeleteBucketNotEmpty(c *check) {
 	response, err = s.client.Do(request)
 	c.Assert(err, nil)
 	c.Assert(response.StatusCode, http.StatusConflict)
-
 }
 
 func (s *TestSuiteCommon) TestListenNotificationHandler(c *check) {
@@ -555,7 +574,9 @@ func (s *TestSuiteCommon) TestDeleteMultipleObjects(c *check) {
 		c.Assert(response.StatusCode, http.StatusOK)
 		// Append all objects.
 		delObjReq.Objects = append(delObjReq.Objects, ObjectToDelete{
-			ObjectName: objName,
+			ObjectV: ObjectV{
+				ObjectName: objName,
+			},
 		})
 	}
 	// Marshal delete request.
@@ -570,7 +591,7 @@ func (s *TestSuiteCommon) TestDeleteMultipleObjects(c *check) {
 	c.Assert(err, nil)
 	c.Assert(response.StatusCode, http.StatusOK)
 
-	var deleteResp = DeleteObjectsResponse{}
+	deleteResp := DeleteObjectsResponse{}
 	delRespBytes, err := ioutil.ReadAll(response.Body)
 	c.Assert(err, nil)
 	err = xml.Unmarshal(delRespBytes, &deleteResp)
@@ -959,7 +980,7 @@ func (s *TestSuiteCommon) TestPutBucket(c *check) {
 	wg.Wait()
 
 	bucketName = getRandomBucketName()
-	//Block 2: testing for correctness of the functionality
+	// Block 2: testing for correctness of the functionality
 	// HTTP request to create the bucket.
 	request, err := newTestSignedRequest(http.MethodPut, getMakeBucketURL(s.endPoint, bucketName),
 		0, nil, s.accessKey, s.secretKey, s.signer)
@@ -1252,7 +1273,7 @@ func (s *TestSuiteCommon) TestPutObjectLongName(c *check) {
 	c.Assert(err, nil)
 	c.Assert(response.StatusCode, http.StatusOK)
 
-	//make long object name.
+	// make long object name.
 	longObjName = fmt.Sprintf("%0255d/%0255d/%0255d/%0255d/%0255d", 1, 1, 1, 1, 1)
 	if IsDocker() || IsKubernetes() {
 		longObjName = fmt.Sprintf("%0242d/%0242d/%0242d/%0242d/%0242d", 1, 1, 1, 1, 1)
@@ -1384,7 +1405,6 @@ func (s *TestSuiteCommon) TestHeadOnObjectLastModified(c *check) {
 	// Since the "If-Modified-Since" header was ahead in time compared to the actual
 	// modified time of the object expecting the response status to be http.StatusNotModified.
 	c.Assert(response.StatusCode, http.StatusOK)
-
 }
 
 // TestHeadOnBucket - Validates response for HEAD on the bucket.
@@ -1573,20 +1593,22 @@ func (s *TestSuiteCommon) TestListObjectsHandler(c *check) {
 		c.Assert(response.StatusCode, http.StatusOK)
 	}
 
-	var testCases = []struct {
+	testCases := []struct {
 		getURL          string
 		expectedStrings []string
 	}{
 		{getListObjectsV1URL(s.endPoint, bucketName, "", "1000", ""), []string{"<Key>foo bar 1</Key>", "<Key>foo bar 2</Key>"}},
 		{getListObjectsV1URL(s.endPoint, bucketName, "", "1000", "url"), []string{"<Key>foo+bar+1</Key>", "<Key>foo+bar+2</Key>"}},
-		{getListObjectsV2URL(s.endPoint, bucketName, "", "1000", "", ""),
+		{
+			getListObjectsV2URL(s.endPoint, bucketName, "", "1000", "", ""),
 			[]string{
 				"<Key>foo bar 1</Key>",
 				"<Key>foo bar 2</Key>",
 				fmt.Sprintf("<Owner><ID>%s</ID><DisplayName>minio</DisplayName></Owner>", globalMinioDefaultOwnerID),
 			},
 		},
-		{getListObjectsV2URL(s.endPoint, bucketName, "", "1000", "true", ""),
+		{
+			getListObjectsV2URL(s.endPoint, bucketName, "", "1000", "true", ""),
 			[]string{
 				"<Key>foo bar 1</Key>",
 				"<Key>foo bar 2</Key>",
@@ -1648,7 +1670,6 @@ func (s *TestSuiteCommon) TestListObjectsHandlerErrors(c *check) {
 	c.Assert(err, nil)
 	// validating the error response.
 	verifyError(c, response, "InvalidArgument", "Argument maxKeys must be an integer between 0 and 2147483647", http.StatusBadRequest)
-
 }
 
 // TestPutBucketErrors - request for non valid bucket operation
@@ -1858,7 +1879,7 @@ func (s *TestSuiteCommon) TestGetPartialObjectMisAligned(c *check) {
 
 	// test Cases containing data to make partial range requests.
 	// also has expected response data.
-	var testCases = []struct {
+	testCases := []struct {
 		byteRange      string
 		expectedString string
 	}{
@@ -2428,7 +2449,7 @@ func (s *TestSuiteCommon) TestObjectMultipartListError(c *check) {
 	c.Assert(err, nil)
 	// Since max-keys parameter in the ListMultipart request set to invalid value of -2,
 	// its expected to fail with error message "InvalidArgument".
-	verifyError(c, response4, "InvalidArgument", "Argument max-parts must be an integer between 0 and 2147483647", http.StatusBadRequest)
+	verifyError(c, response4, "InvalidArgument", "Part number must be an integer between 1 and 10000, inclusive", http.StatusBadRequest)
 }
 
 // TestObjectValidMD5 - First uploads an object with a valid Content-Md5 header and verifies the status,

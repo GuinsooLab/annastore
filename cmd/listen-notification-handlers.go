@@ -23,9 +23,10 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/minio/minio/cmd/logger"
-	policy "github.com/minio/minio/pkg/bucket/policy"
-	"github.com/minio/minio/pkg/event"
+	"github.com/minio/minio/internal/event"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/minio/internal/pubsub"
+	"github.com/minio/pkg/bucket/policy"
 )
 
 func (api objectAPIHandlers) ListenNotificationHandler(w http.ResponseWriter, r *http.Request) {
@@ -36,17 +37,17 @@ func (api objectAPIHandlers) ListenNotificationHandler(w http.ResponseWriter, r 
 	// Validate if bucket exists.
 	objAPI := api.ObjectAPI()
 	if objAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
 		return
 	}
 
 	if !objAPI.IsNotificationSupported() {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
 		return
 	}
 
 	if !objAPI.IsListenSupported() {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
 		return
 	}
 
@@ -55,27 +56,27 @@ func (api objectAPIHandlers) ListenNotificationHandler(w http.ResponseWriter, r 
 
 	if bucketName == "" {
 		if s3Error := checkRequestAuthType(ctx, r, policy.ListenNotificationAction, bucketName, ""); s3Error != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL)
 			return
 		}
 	} else {
 		if s3Error := checkRequestAuthType(ctx, r, policy.ListenBucketNotificationAction, bucketName, ""); s3Error != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL)
 			return
 		}
 	}
 
-	values := r.URL.Query()
+	values := r.Form
 
 	var prefix string
 	if len(values[peerRESTListenPrefix]) > 1 {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrFilterNamePrefix), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrFilterNamePrefix), r.URL)
 		return
 	}
 
 	if len(values[peerRESTListenPrefix]) == 1 {
 		if err := event.ValidateFilterRuleValue(values[peerRESTListenPrefix][0]); err != nil {
-			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 			return
 		}
 
@@ -84,13 +85,13 @@ func (api objectAPIHandlers) ListenNotificationHandler(w http.ResponseWriter, r 
 
 	var suffix string
 	if len(values[peerRESTListenSuffix]) > 1 {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrFilterNameSuffix), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrFilterNameSuffix), r.URL)
 		return
 	}
 
 	if len(values[peerRESTListenSuffix]) == 1 {
 		if err := event.ValidateFilterRuleValue(values[peerRESTListenSuffix][0]); err != nil {
-			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 			return
 		}
 
@@ -100,19 +101,20 @@ func (api objectAPIHandlers) ListenNotificationHandler(w http.ResponseWriter, r 
 	pattern := event.NewPattern(prefix, suffix)
 
 	var eventNames []event.Name
+	var mask pubsub.Mask
 	for _, s := range values[peerRESTListenEvents] {
 		eventName, err := event.ParseName(s)
 		if err != nil {
-			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 			return
 		}
-
+		mask.MergeMaskable(eventName)
 		eventNames = append(eventNames, eventName)
 	}
 
 	if bucketName != "" {
-		if _, err := objAPI.GetBucketInfo(ctx, bucketName); err != nil {
-			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		if _, err := objAPI.GetBucketInfo(ctx, bucketName, BucketOptions{}); err != nil {
+			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 			return
 		}
 	}
@@ -123,11 +125,11 @@ func (api objectAPIHandlers) ListenNotificationHandler(w http.ResponseWriter, r 
 
 	// Listen Publisher and peer-listen-client uses nonblocking send and hence does not wait for slow receivers.
 	// Use buffered channel to take care of burst sends or slow w.Write()
-	listenCh := make(chan interface{}, 4000)
+	listenCh := make(chan pubsub.Maskable, 4000)
 
 	peers, _ := newPeerRestClients(globalEndpoints)
 
-	globalHTTPListen.Subscribe(listenCh, ctx.Done(), func(evI interface{}) bool {
+	err := globalHTTPListen.Subscribe(mask, listenCh, ctx.Done(), func(evI pubsub.Maskable) bool {
 		ev, ok := evI.(event.Event)
 		if !ok {
 			return false
@@ -139,7 +141,10 @@ func (api objectAPIHandlers) ListenNotificationHandler(w http.ResponseWriter, r 
 		}
 		return rulesMap.MatchSimple(ev.EventName, ev.S3.Object.Key)
 	})
-
+	if err != nil {
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrSlowDown), r.URL)
+		return
+	}
 	if bucketName != "" {
 		values.Set(peerRESTListenBucket, bucketName)
 	}
@@ -167,7 +172,10 @@ func (api objectAPIHandlers) ListenNotificationHandler(w http.ResponseWriter, r 
 					return
 				}
 			}
-			w.(http.Flusher).Flush()
+			if len(listenCh) == 0 {
+				// Flush if nothing is queued
+				w.(http.Flusher).Flush()
+			}
 		case <-keepAliveTicker.C:
 			if _, err := w.Write([]byte(" ")); err != nil {
 				return

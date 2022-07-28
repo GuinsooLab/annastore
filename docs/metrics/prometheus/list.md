@@ -9,13 +9,14 @@ These metrics can be from any MinIO server once per collection.
 |:---------------------------------------------|:--------------------------------------------------------------------------------------------------------------------|
 | `minio_bucket_objects_size_distribution`     | Distribution of object sizes in the bucket, includes label for the bucket name.                                     |
 | `minio_bucket_replication_failed_bytes`      | Total number of bytes failed at least once to replicate.                                                            |
-| `minio_bucket_replication_pending_bytes`     | Total bytes pending to replicate.                                                                                   |
 | `minio_bucket_replication_received_bytes`    | Total number of bytes replicated to this bucket from another source bucket.                                         |
 | `minio_bucket_replication_sent_bytes`        | Total number of bytes replicated to the target bucket.                                                              |
-| `minio_bucket_replication_pending_count`     | Total number of replication operations pending for this bucket.                                                     |
 | `minio_bucket_replication_failed_count`      | Total number of replication foperations failed for this bucket.                                                     |
 | `minio_bucket_usage_object_total`            | Total number of objects                                                                                             |
 | `minio_bucket_usage_total_bytes`             | Total bucket size in bytes                                                                                          |
+| `minio_bucket_quota_total_bytes`             | Total bucket quota size in bytes                                                                                    |
+| `minio_bucket_traffic_sent_bytes`            | Total s3 bytes sent per bucket                                                                                      |
+| `minio_bucket_traffic_received_bytes`        | Total s3 bytes received per bucket                                                                                  |
 | `minio_cache_hits_total`                     | Total number of disk cache hits                                                                                     |
 | `minio_cache_missed_total`                   | Total number of disk cache misses                                                                                   |
 | `minio_cache_sent_bytes`                     | Total number of bytes served from cache                                                                             |
@@ -28,12 +29,18 @@ These metrics can be from any MinIO server once per collection.
 | `minio_cluster_capacity_usable_total_bytes`  | Total usable capacity online in the cluster.                                                                        |
 | `minio_cluster_nodes_offline_total`          | Total number of MinIO nodes offline.                                                                                |
 | `minio_cluster_nodes_online_total`           | Total number of MinIO nodes online.                                                                                 |
+| `minio_cluster_ilm_transitioned_bytes`       | Total bytes transitioned to a tier                                                                                  |
+| `minio_cluster_ilm_transitioned_objects`     | Total number of objects transitioned to a tier                                                                      |
+| `minio_cluster_ilm_transitioned_versions`    | Total number of versions transitioned to a tier                                                                     |
 | `minio_heal_objects_error_total`             | Objects for which healing failed in current self healing run                                                        |
 | `minio_heal_objects_heal_total`              | Objects healed in current self healing run                                                                          |
 | `minio_heal_objects_total`                   | Objects scanned in current self healing run                                                                         |
 | `minio_heal_time_last_activity_nano_seconds` | Time elapsed (in nano seconds) since last self healing activity. This is set to -1 until initial self heal activity |
 | `minio_inter_node_traffic_received_bytes`    | Total number of bytes received from other peer nodes.                                                               |
 | `minio_inter_node_traffic_sent_bytes`        | Total number of bytes sent to the other peer nodes.                                                                 |
+| `minio_node_ilm_expiry_pending_tasks`        | Current number of pending ILM expiry tasks in the queue.                                                            |
+| `minio_node_ilm_transition_active_tasks`     | Current number of active ILM transition tasks.                                                                      |
+| `minio_node_ilm_transition_pending_tasks`    | Current number of pending ILM transition tasks in the queue.                                                        |
 | `minio_node_disk_free_bytes`                 | Total storage available on a disk.                                                                                  |
 | `minio_node_disk_total_bytes`                | Total storage on a disk.                                                                                            |
 | `minio_node_disk_used_bytes`                 | Total storage used on a disk.                                                                                       |
@@ -47,10 +54,12 @@ These metrics can be from any MinIO server once per collection.
 | `minio_node_process_uptime_seconds`          | Uptime for MinIO process per node in seconds.                                                                       |
 | `minio_node_syscall_read_total`              | Total read SysCalls to the kernel. /proc/[pid]/io syscr                                                             |
 | `minio_node_syscall_write_total`             | Total write SysCalls to the kernel. /proc/[pid]/io syscw                                                            |
-| `minio_s3_requests_error_total`              | Total number S3 requests with errors                                                                                |
+| `minio_s3_requests_errors_total`             | Total number S3 requests with 4xx and 5xx errors                                                                    |
+| `minio_s3_requests_4xx_errors_total`         | Total number S3 requests with 4xx errors                                                                            |
+| `minio_s3_requests_5xx_errors_total`         | Total number S3 requests with 5xx errors                                                                            |
 | `minio_s3_requests_inflight_total`           | Total number of S3 requests currently in flight                                                                     |
 | `minio_s3_requests_total`                    | Total number S3 requests                                                                                            |
-| `minio_s3_time_ttbf_seconds_distribution`    | Distribution of the time to first byte across API calls.                                                            |
+| `minio_s3_time_ttfb_seconds_distribution`    | Distribution of the time to first byte across API calls.                                                            |
 | `minio_s3_traffic_received_bytes`            | Total number of s3 bytes received.                                                                                  |
 | `minio_s3_traffic_sent_bytes`                | Total number of s3 bytes sent                                                                                       |
 | `minio_software_commit_info`                 | Git commit hash for the MinIO release.                                                                              |

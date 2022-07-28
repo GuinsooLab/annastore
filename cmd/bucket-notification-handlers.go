@@ -24,13 +24,12 @@ import (
 	"reflect"
 
 	"github.com/gorilla/mux"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/bucket/policy"
-	"github.com/minio/minio/pkg/event"
+	"github.com/minio/minio/internal/event"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/pkg/bucket/policy"
 )
 
 const (
-	bucketConfigPrefix       = "buckets"
 	bucketNotificationConfig = "notification.xml"
 )
 
@@ -47,33 +46,33 @@ func (api objectAPIHandlers) GetBucketNotificationHandler(w http.ResponseWriter,
 
 	objAPI := api.ObjectAPI()
 	if objAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
 		return
 	}
 
 	if !objAPI.IsNotificationSupported() {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
 		return
 	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.GetBucketNotificationAction, bucketName, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL)
 		return
 	}
 
-	_, err := objAPI.GetBucketInfo(ctx, bucketName)
+	_, err := objAPI.GetBucketInfo(ctx, bucketName, BucketOptions{})
 	if err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
 
 	config, err := globalBucketMetadataSys.GetNotificationConfig(bucketName)
 	if err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
-	config.SetRegion(globalServerRegion)
-	if err = config.Validate(globalServerRegion, globalNotificationSys.targetList); err != nil {
+	config.SetRegion(globalSite.Region)
+	if err = config.Validate(globalSite.Region, globalNotificationSys.targetList); err != nil {
 		arnErr, ok := err.(*event.ErrARNNotFound)
 		if ok {
 			for i, queue := range config.QueueList {
@@ -93,14 +92,14 @@ func (api objectAPIHandlers) GetBucketNotificationHandler(w http.ResponseWriter,
 				// notification configs.
 			}
 		} else {
-			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 			return
 		}
 	}
 
 	configData, err := xml.Marshal(config)
 	if err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
 
@@ -116,12 +115,12 @@ func (api objectAPIHandlers) PutBucketNotificationHandler(w http.ResponseWriter,
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
 		return
 	}
 
 	if !objectAPI.IsNotificationSupported() {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
 		return
 	}
 
@@ -129,40 +128,40 @@ func (api objectAPIHandlers) PutBucketNotificationHandler(w http.ResponseWriter,
 	bucketName := vars["bucket"]
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.PutBucketNotificationAction, bucketName, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL)
 		return
 	}
 
-	_, err := objectAPI.GetBucketInfo(ctx, bucketName)
+	_, err := objectAPI.GetBucketInfo(ctx, bucketName, BucketOptions{})
 	if err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
 
 	// PutBucketNotification always needs a Content-Length.
 	if r.ContentLength <= 0 {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMissingContentLength), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMissingContentLength), r.URL)
 		return
 	}
 
-	config, err := event.ParseConfig(io.LimitReader(r.Body, r.ContentLength), globalServerRegion, globalNotificationSys.targetList)
+	config, err := event.ParseConfig(io.LimitReader(r.Body, r.ContentLength), globalSite.Region, globalNotificationSys.targetList)
 	if err != nil {
 		apiErr := errorCodes.ToAPIErr(ErrMalformedXML)
 		if event.IsEventError(err) {
 			apiErr = toAPIError(ctx, err)
 		}
-		writeErrorResponse(ctx, w, apiErr, r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, apiErr, r.URL)
 		return
 	}
 
 	configData, err := xml.Marshal(config)
 	if err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
 
-	if err = globalBucketMetadataSys.Update(bucketName, bucketNotificationConfig, configData); err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+	if _, err = globalBucketMetadataSys.Update(ctx, bucketName, bucketNotificationConfig, configData); err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
 

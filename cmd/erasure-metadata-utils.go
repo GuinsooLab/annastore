@@ -23,8 +23,8 @@ import (
 	"fmt"
 	"hash/crc32"
 
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/sync/errgroup"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/minio/internal/sync/errgroup"
 )
 
 // Returns number of errors that occurred the most (incl. nil) and the
@@ -37,6 +37,11 @@ func reduceErrs(errs []error, ignoredErrs []error) (maxCount int, maxErr error) 
 	errorCounts := make(map[error]int)
 	for _, err := range errs {
 		if IsErrIgnored(err, ignoredErrs...) {
+			continue
+		}
+		// Errors due to context cancelation may be wrapped - group them by context.Canceled.
+		if errors.Is(err, context.Canceled) {
+			errorCounts[context.Canceled]++
 			continue
 		}
 		errorCounts[err]++
@@ -62,6 +67,9 @@ func reduceErrs(errs []error, ignoredErrs []error) (maxCount int, maxErr error) 
 // values of maximally occurring errors validated against a generic
 // quorum number that can be read or write quorum depending on usage.
 func reduceQuorumErrs(ctx context.Context, errs []error, ignoredErrs []error, quorum int, quorumErr error) error {
+	if contextCanceled(ctx) {
+		return context.Canceled
+	}
 	maxCount, maxErr := reduceErrs(errs, ignoredErrs)
 	if maxCount >= quorum {
 		return maxErr
@@ -129,24 +137,30 @@ func readAllFileInfo(ctx context.Context, disks []StorageAPI, bucket, object, ve
 				return errDiskNotFound
 			}
 			metadataArray[index], err = disks[index].ReadVersion(ctx, bucket, object, versionID, readData)
-			if err != nil {
-				if !IsErr(err, []error{
-					errFileNotFound,
-					errVolumeNotFound,
-					errFileVersionNotFound,
-					errDiskNotFound,
-				}...) {
-					logger.LogOnceIf(ctx, fmt.Errorf("Drive %s, path (%s/%s) returned an error (%w)",
-						disks[index], bucket, object, err),
-						disks[index].String())
-				}
-			}
 			return err
 		}, index)
 	}
 
+	errs := g.Wait()
+	for index, err := range errs {
+		if err == nil {
+			continue
+		}
+		if !IsErr(err, []error{
+			errFileNotFound,
+			errVolumeNotFound,
+			errFileVersionNotFound,
+			errDiskNotFound,
+			errUnformattedDisk,
+		}...) {
+			logger.LogOnceIf(ctx, fmt.Errorf("Drive %s, path (%s/%s) returned an error (%w)",
+				disks[index], bucket, object, err),
+				disks[index].String())
+		}
+	}
+
 	// Return all the metadata.
-	return metadataArray, g.Wait()
+	return metadataArray, errs
 }
 
 // shuffleDisksAndPartsMetadataByIndex this function should be always used by GetObjectNInfo()
@@ -170,7 +184,7 @@ func shuffleDisksAndPartsMetadataByIndex(disks []StorageAPI, metaArr []FileInfo,
 			inconsistent++
 			continue
 		}
-		if len(fi.Data) != len(meta.Data) {
+		if meta.XLV1 != fi.XLV1 {
 			inconsistent++
 			continue
 		}
@@ -217,10 +231,7 @@ func shuffleDisksAndPartsMetadata(disks []StorageAPI, partsMetadata []FileInfo, 
 			// if object was ever written previously.
 			continue
 		}
-		if !init && len(fi.Data) != len(partsMetadata[index].Data) {
-			// Check for length of data parts only when
-			// fi.ModTime is not empty - ModTime is always set,
-			// if object was ever written previously.
+		if !init && fi.XLV1 != partsMetadata[index].XLV1 {
 			continue
 		}
 		blockIndex := distribution[index]

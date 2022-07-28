@@ -22,7 +22,6 @@ package cmd
 import (
 	"bufio"
 	"bytes"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"hash"
@@ -31,8 +30,9 @@ import (
 	"time"
 
 	humanize "github.com/dustin/go-humanize"
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/pkg/auth"
+	"github.com/minio/minio/internal/auth"
+	"github.com/minio/minio/internal/hash/sha256"
+	xhttp "github.com/minio/minio/internal/http"
 )
 
 // Streaming AWS Signature Version '4' constants.
@@ -74,7 +74,7 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 	v4Auth := req.Header.Get(xhttp.Authorization)
 
 	// Parse signature version '4' header.
-	signV4Values, errCode := parseSignV4(v4Auth, globalServerRegion, serviceS3)
+	signV4Values, errCode := parseSignV4(v4Auth, globalSite.Region, serviceS3)
 	if errCode != ErrNone {
 		return cred, "", "", time.Time{}, errCode
 	}
@@ -93,7 +93,7 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 		return cred, "", "", time.Time{}, errCode
 	}
 
-	cred, _, errCode = checkKeyValid(signV4Values.Credential.accessKey)
+	cred, _, errCode = checkKeyValid(r, signV4Values.Credential.accessKey)
 	if errCode != ErrNone {
 		return cred, "", "", time.Time{}, errCode
 	}
@@ -117,7 +117,7 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 	}
 
 	// Query string.
-	queryStr := req.URL.Query().Encode()
+	queryStr := req.Form.Encode()
 
 	// Get canonical request.
 	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, payload, queryStr, req.URL.Path, req.Method)
@@ -145,8 +145,11 @@ const maxLineLength = 4 * humanize.KiByte // assumed <= bufio.defaultBufSize 4Ki
 // lineTooLong is generated as chunk header is bigger than 4KiB.
 var errLineTooLong = errors.New("header line too long")
 
-// Malformed encoding is generated when chunk header is wrongly formed.
+// malformed encoding is generated when chunk header is wrongly formed.
 var errMalformedEncoding = errors.New("malformed chunked encoding")
+
+// chunk is considered too big if its bigger than > 16MiB.
+var errChunkTooBig = errors.New("chunk too big: choose chunk size <= 16MiB")
 
 // newSignV4ChunkedReader returns a new s3ChunkedReader that translates the data read from r
 // out of HTTP "chunked" format before returning it.
@@ -190,6 +193,22 @@ func (cr *s3ChunkedReader) Close() (err error) {
 	return nil
 }
 
+// Now, we read one chunk from the underlying reader.
+// A chunk has the following format:
+//   <chunk-size-as-hex> + ";chunk-signature=" + <signature-as-hex> + "\r\n" + <payload> + "\r\n"
+//
+// First, we read the chunk size but fail if it is larger
+// than 16 MiB. We must not accept arbitrary large chunks.
+// One 16 MiB is a reasonable max limit.
+//
+// Then we read the signature and payload data. We compute the SHA256 checksum
+// of the payload and verify that it matches the expected signature value.
+//
+// The last chunk is *always* 0-sized. So, we must only return io.EOF if we have encountered
+// a chunk with a chunk size = 0. However, this chunk still has a signature and we must
+// verify it.
+const maxChunkSize = 16 << 20 // 16 MiB
+
 // Read - implements `io.Reader`, which transparently decodes
 // the incoming AWS Signature V4 streaming signature.
 func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
@@ -205,21 +224,6 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 		buf = buf[n:]
 	}
 
-	// Now, we read one chunk from the underlying reader.
-	// A chunk has the following format:
-	//   <chunk-size-as-hex> + ";chunk-signature=" + <signature-as-hex> + "\r\n" + <payload> + "\r\n"
-	//
-	// Frist, we read the chunk size but fail if it is larger
-	// than 1 MB. We must not accept arbitrary large chunks.
-	// One 1 MB is a reasonable max limit.
-	//
-	// Then we read the signature and payload data. We compute the SHA256 checksum
-	// of the payload and verify that it matches the expected signature value.
-	//
-	// The last chunk is *always* 0-sized. So, we must only return io.EOF if we have encountered
-	// a chunk with a chunk size = 0. However, this chunk still has a signature and we must
-	// verify it.
-	const MaxSize = 1 << 20 // 1 MB
 	var size int
 	for {
 		b, err := cr.reader.ReadByte()
@@ -249,8 +253,8 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			cr.err = errMalformedEncoding
 			return n, cr.err
 		}
-		if size > MaxSize {
-			cr.err = errMalformedEncoding
+		if size > maxChunkSize {
+			cr.err = errChunkTooBig
 			return n, cr.err
 		}
 	}
@@ -432,7 +436,7 @@ func parseHexUint(v []byte) (n uint64, err error) {
 	for i, b := range v {
 		switch {
 		case '0' <= b && b <= '9':
-			b = b - '0'
+			b -= '0'
 		case 'a' <= b && b <= 'f':
 			b = b - 'a' + 10
 		case 'A' <= b && b <= 'F':

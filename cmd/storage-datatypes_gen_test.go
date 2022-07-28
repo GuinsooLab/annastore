@@ -574,8 +574,8 @@ func BenchmarkDecodeFilesInfo(b *testing.B) {
 	}
 }
 
-func TestMarshalUnmarshalFilesInfoVersions(t *testing.T) {
-	v := FilesInfoVersions{}
+func TestMarshalUnmarshalRawFileInfo(t *testing.T) {
+	v := RawFileInfo{}
 	bts, err := v.MarshalMsg(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -597,8 +597,8 @@ func TestMarshalUnmarshalFilesInfoVersions(t *testing.T) {
 	}
 }
 
-func BenchmarkMarshalMsgFilesInfoVersions(b *testing.B) {
-	v := FilesInfoVersions{}
+func BenchmarkMarshalMsgRawFileInfo(b *testing.B) {
+	v := RawFileInfo{}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -606,8 +606,8 @@ func BenchmarkMarshalMsgFilesInfoVersions(b *testing.B) {
 	}
 }
 
-func BenchmarkAppendMsgFilesInfoVersions(b *testing.B) {
-	v := FilesInfoVersions{}
+func BenchmarkAppendMsgRawFileInfo(b *testing.B) {
+	v := RawFileInfo{}
 	bts := make([]byte, 0, v.Msgsize())
 	bts, _ = v.MarshalMsg(bts[0:0])
 	b.SetBytes(int64(len(bts)))
@@ -618,8 +618,8 @@ func BenchmarkAppendMsgFilesInfoVersions(b *testing.B) {
 	}
 }
 
-func BenchmarkUnmarshalFilesInfoVersions(b *testing.B) {
-	v := FilesInfoVersions{}
+func BenchmarkUnmarshalRawFileInfo(b *testing.B) {
+	v := RawFileInfo{}
 	bts, _ := v.MarshalMsg(nil)
 	b.ReportAllocs()
 	b.SetBytes(int64(len(bts)))
@@ -632,17 +632,17 @@ func BenchmarkUnmarshalFilesInfoVersions(b *testing.B) {
 	}
 }
 
-func TestEncodeDecodeFilesInfoVersions(t *testing.T) {
-	v := FilesInfoVersions{}
+func TestEncodeDecodeRawFileInfo(t *testing.T) {
+	v := RawFileInfo{}
 	var buf bytes.Buffer
 	msgp.Encode(&buf, &v)
 
 	m := v.Msgsize()
 	if buf.Len() > m {
-		t.Log("WARNING: TestEncodeDecodeFilesInfoVersions Msgsize() is inaccurate")
+		t.Log("WARNING: TestEncodeDecodeRawFileInfo Msgsize() is inaccurate")
 	}
 
-	vn := FilesInfoVersions{}
+	vn := RawFileInfo{}
 	err := msgp.Decode(&buf, &vn)
 	if err != nil {
 		t.Error(err)
@@ -656,8 +656,8 @@ func TestEncodeDecodeFilesInfoVersions(t *testing.T) {
 	}
 }
 
-func BenchmarkEncodeFilesInfoVersions(b *testing.B) {
-	v := FilesInfoVersions{}
+func BenchmarkEncodeRawFileInfo(b *testing.B) {
+	v := RawFileInfo{}
 	var buf bytes.Buffer
 	msgp.Encode(&buf, &v)
 	b.SetBytes(int64(buf.Len()))
@@ -670,8 +670,234 @@ func BenchmarkEncodeFilesInfoVersions(b *testing.B) {
 	en.Flush()
 }
 
-func BenchmarkDecodeFilesInfoVersions(b *testing.B) {
-	v := FilesInfoVersions{}
+func BenchmarkDecodeRawFileInfo(b *testing.B) {
+	v := RawFileInfo{}
+	var buf bytes.Buffer
+	msgp.Encode(&buf, &v)
+	b.SetBytes(int64(buf.Len()))
+	rd := msgp.NewEndlessReader(buf.Bytes(), b)
+	dc := msgp.NewReader(rd)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		err := v.DecodeMsg(dc)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestMarshalUnmarshalReadMultipleReq(t *testing.T) {
+	v := ReadMultipleReq{}
+	bts, err := v.MarshalMsg(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, err := v.UnmarshalMsg(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after UnmarshalMsg(): %q", len(left), left)
+	}
+
+	left, err = msgp.Skip(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after Skip(): %q", len(left), left)
+	}
+}
+
+func BenchmarkMarshalMsgReadMultipleReq(b *testing.B) {
+	v := ReadMultipleReq{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		v.MarshalMsg(nil)
+	}
+}
+
+func BenchmarkAppendMsgReadMultipleReq(b *testing.B) {
+	v := ReadMultipleReq{}
+	bts := make([]byte, 0, v.Msgsize())
+	bts, _ = v.MarshalMsg(bts[0:0])
+	b.SetBytes(int64(len(bts)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bts, _ = v.MarshalMsg(bts[0:0])
+	}
+}
+
+func BenchmarkUnmarshalReadMultipleReq(b *testing.B) {
+	v := ReadMultipleReq{}
+	bts, _ := v.MarshalMsg(nil)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(bts)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := v.UnmarshalMsg(bts)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestEncodeDecodeReadMultipleReq(t *testing.T) {
+	v := ReadMultipleReq{}
+	var buf bytes.Buffer
+	msgp.Encode(&buf, &v)
+
+	m := v.Msgsize()
+	if buf.Len() > m {
+		t.Log("WARNING: TestEncodeDecodeReadMultipleReq Msgsize() is inaccurate")
+	}
+
+	vn := ReadMultipleReq{}
+	err := msgp.Decode(&buf, &vn)
+	if err != nil {
+		t.Error(err)
+	}
+
+	buf.Reset()
+	msgp.Encode(&buf, &v)
+	err = msgp.NewReader(&buf).Skip()
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func BenchmarkEncodeReadMultipleReq(b *testing.B) {
+	v := ReadMultipleReq{}
+	var buf bytes.Buffer
+	msgp.Encode(&buf, &v)
+	b.SetBytes(int64(buf.Len()))
+	en := msgp.NewWriter(msgp.Nowhere)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		v.EncodeMsg(en)
+	}
+	en.Flush()
+}
+
+func BenchmarkDecodeReadMultipleReq(b *testing.B) {
+	v := ReadMultipleReq{}
+	var buf bytes.Buffer
+	msgp.Encode(&buf, &v)
+	b.SetBytes(int64(buf.Len()))
+	rd := msgp.NewEndlessReader(buf.Bytes(), b)
+	dc := msgp.NewReader(rd)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		err := v.DecodeMsg(dc)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestMarshalUnmarshalReadMultipleResp(t *testing.T) {
+	v := ReadMultipleResp{}
+	bts, err := v.MarshalMsg(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, err := v.UnmarshalMsg(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after UnmarshalMsg(): %q", len(left), left)
+	}
+
+	left, err = msgp.Skip(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after Skip(): %q", len(left), left)
+	}
+}
+
+func BenchmarkMarshalMsgReadMultipleResp(b *testing.B) {
+	v := ReadMultipleResp{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		v.MarshalMsg(nil)
+	}
+}
+
+func BenchmarkAppendMsgReadMultipleResp(b *testing.B) {
+	v := ReadMultipleResp{}
+	bts := make([]byte, 0, v.Msgsize())
+	bts, _ = v.MarshalMsg(bts[0:0])
+	b.SetBytes(int64(len(bts)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bts, _ = v.MarshalMsg(bts[0:0])
+	}
+}
+
+func BenchmarkUnmarshalReadMultipleResp(b *testing.B) {
+	v := ReadMultipleResp{}
+	bts, _ := v.MarshalMsg(nil)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(bts)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := v.UnmarshalMsg(bts)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestEncodeDecodeReadMultipleResp(t *testing.T) {
+	v := ReadMultipleResp{}
+	var buf bytes.Buffer
+	msgp.Encode(&buf, &v)
+
+	m := v.Msgsize()
+	if buf.Len() > m {
+		t.Log("WARNING: TestEncodeDecodeReadMultipleResp Msgsize() is inaccurate")
+	}
+
+	vn := ReadMultipleResp{}
+	err := msgp.Decode(&buf, &vn)
+	if err != nil {
+		t.Error(err)
+	}
+
+	buf.Reset()
+	msgp.Encode(&buf, &v)
+	err = msgp.NewReader(&buf).Skip()
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func BenchmarkEncodeReadMultipleResp(b *testing.B) {
+	v := ReadMultipleResp{}
+	var buf bytes.Buffer
+	msgp.Encode(&buf, &v)
+	b.SetBytes(int64(buf.Len()))
+	en := msgp.NewWriter(msgp.Nowhere)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		v.EncodeMsg(en)
+	}
+	en.Flush()
+}
+
+func BenchmarkDecodeReadMultipleResp(b *testing.B) {
+	v := ReadMultipleResp{}
 	var buf bytes.Buffer
 	msgp.Encode(&buf, &v)
 	b.SetBytes(int64(buf.Len()))

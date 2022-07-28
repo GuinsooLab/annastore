@@ -22,12 +22,11 @@ import (
 	"context"
 	"io"
 	"net/url"
-	"strconv"
 
-	"github.com/minio/minio/cmd/http"
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/rest"
-	"github.com/minio/minio/pkg/dsync"
+	"github.com/minio/minio/internal/dsync"
+	"github.com/minio/minio/internal/http"
+	xhttp "github.com/minio/minio/internal/http"
+	"github.com/minio/minio/internal/rest"
 )
 
 // lockRESTClient is authenticable lock REST client
@@ -89,17 +88,13 @@ func (client *lockRESTClient) Close() error {
 
 // restCall makes a call to the lock REST server.
 func (client *lockRESTClient) restCall(ctx context.Context, call string, args dsync.LockArgs) (reply bool, err error) {
-	values := url.Values{}
-	values.Set(lockRESTUID, args.UID)
-	values.Set(lockRESTOwner, args.Owner)
-	values.Set(lockRESTSource, args.Source)
-	values.Set(lockRESTQuorum, strconv.Itoa(args.Quorum))
-	var buffer bytes.Buffer
-	for _, resource := range args.Resources {
-		buffer.WriteString(resource)
-		buffer.WriteString("\n")
+	argsBytes, err := args.MarshalMsg(metaDataPoolGet()[:0])
+	if err != nil {
+		return false, err
 	}
-	respBody, err := client.callWithContext(ctx, call, values, &buffer, -1)
+	defer metaDataPoolPut(argsBytes)
+	body := bytes.NewReader(argsBytes)
+	respBody, err := client.callWithContext(ctx, call, nil, body, body.Size())
 	defer http.DrainBody(respBody)
 	switch err {
 	case nil:
@@ -156,11 +151,12 @@ func newlockRESTClient(endpoint Endpoint) *lockRESTClient {
 		Path:   pathJoin(lockRESTPrefix, lockRESTVersion),
 	}
 
-	restClient := rest.NewClient(serverURL, globalInternodeTransport, newAuthToken)
+	restClient := rest.NewClient(serverURL, globalInternodeTransport, newCachedAuthToken())
 	restClient.ExpectTimeouts = true
 	// Use a separate client to avoid recursive calls.
-	healthClient := rest.NewClient(serverURL, globalInternodeTransport, newAuthToken)
+	healthClient := rest.NewClient(serverURL, globalInternodeTransport, newCachedAuthToken())
 	healthClient.ExpectTimeouts = true
+	healthClient.NoMetrics = true
 	restClient.HealthCheckFn = func() bool {
 		ctx, cancel := context.WithTimeout(context.Background(), restClient.HealthCheckTimeout)
 		defer cancel()

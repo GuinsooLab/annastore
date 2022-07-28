@@ -18,14 +18,19 @@
 package cmd
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 
 	"github.com/minio/cli"
-	"github.com/minio/minio/pkg/console"
-	"github.com/minio/minio/pkg/trie"
-	"github.com/minio/minio/pkg/words"
+	"github.com/minio/minio/internal/color"
+	"github.com/minio/pkg/console"
+	"github.com/minio/pkg/trie"
+	"github.com/minio/pkg/words"
 )
 
 // GlobalFlags - global flags for minio.
@@ -44,7 +49,7 @@ var GlobalFlags = []cli.Flag{
 	},
 	cli.BoolFlag{
 		Name:  "quiet",
-		Usage: "disable startup information",
+		Usage: "disable startup and info messages",
 	},
 	cli.BoolFlag{
 		Name:  "anonymous",
@@ -52,7 +57,7 @@ var GlobalFlags = []cli.Flag{
 	},
 	cli.BoolFlag{
 		Name:  "json",
-		Usage: "output server logs and startup information in json format",
+		Usage: "output logs in JSON format",
 	},
 	// Deprecated flag, so its hidden now, existing deployments will keep working.
 	cli.BoolFlag{
@@ -131,6 +136,7 @@ func newApp(name string) *cli.App {
 		Name:  "help, h",
 		Usage: "show help",
 	}
+	cli.VersionPrinter = printMinIOVersion
 
 	app := cli.NewApp()
 	app.Name = name
@@ -157,6 +163,25 @@ func newApp(name string) *cli.App {
 	}
 
 	return app
+}
+
+func startupBanner(banner io.Writer) {
+	fmt.Fprintln(banner, color.Blue("Copyright:")+color.Bold(" 2015-%s MinIO, Inc.", CopyrightYear))
+	fmt.Fprintln(banner, color.Blue("License:")+color.Bold(" GNU AGPLv3 <https://www.gnu.org/licenses/agpl-3.0.html>"))
+	fmt.Fprintln(banner, color.Blue("Version:")+color.Bold(" %s (%s %s/%s)", ReleaseTag, runtime.Version(), runtime.GOOS, runtime.GOARCH))
+}
+
+func versionBanner(c *cli.Context) io.Reader {
+	banner := &strings.Builder{}
+	fmt.Fprintln(banner, color.Bold("%s version %s (commit-id=%s)", c.App.Name, c.App.Version, CommitID))
+	fmt.Fprintln(banner, color.Blue("Runtime:")+color.Bold(" %s %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH))
+	fmt.Fprintln(banner, color.Blue("License:")+color.Bold(" GNU AGPLv3 <https://www.gnu.org/licenses/agpl-3.0.html>"))
+	fmt.Fprintln(banner, color.Blue("Copyright:")+color.Bold(" 2015-%s MinIO, Inc.", CopyrightYear))
+	return strings.NewReader(banner.String())
+}
+
+func printMinIOVersion(c *cli.Context) {
+	io.Copy(c.App.Writer, versionBanner(c))
 }
 
 // Main main for minio server.

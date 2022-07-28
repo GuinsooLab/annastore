@@ -107,7 +107,7 @@ func TestDoesPresignedSignatureMatch(t *testing.T) {
 	now := UTCNow()
 	credentialTemplate := "%s/%s/%s/s3/aws4_request"
 
-	region := globalServerRegion
+	region := globalSite.Region
 	accessKeyID := globalActiveCred.AccessKey
 	testCases := []struct {
 		queryParams map[string]string
@@ -292,6 +292,9 @@ func TestDoesPresignedSignatureMatch(t *testing.T) {
 		for key, value := range testCase.headers {
 			req.Header.Set(key, value)
 		}
+
+		// parse form.
+		req.ParseForm()
 
 		// Check if it matches!
 		err := doesPresignedSignatureMatch(payloadSHA256, req, testCase.region, serviceS3)

@@ -29,18 +29,19 @@ import (
 	"strings"
 	"time"
 
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/handlers"
+	"github.com/minio/minio/internal/crypto"
+	"github.com/minio/minio/internal/handlers"
+	xhttp "github.com/minio/minio/internal/http"
+	"github.com/minio/minio/internal/logger"
 )
 
 const (
 	// RFC3339 a subset of the ISO8601 timestamp format. e.g 2014-04-29T18:30:38Z
-	iso8601TimeFormat = "2006-01-02T15:04:05.000Z"                     // Reply date format with nanosecond precision.
-	maxObjectList     = metacacheBlockSize - (metacacheBlockSize / 10) // Limit number of objects in a listObjectsResponse/listObjectsVersionsResponse.
-	maxDeleteList     = 10000                                          // Limit number of objects deleted in a delete call.
-	maxUploadsList    = 10000                                          // Limit number of uploads in a listUploadsResponse.
-	maxPartsList      = 10000                                          // Limit number of parts in a listPartsResponse.
+	iso8601TimeFormat = "2006-01-02T15:04:05.000Z" // Reply date format with nanosecond precision.
+	maxObjectList     = 1000                       // Limit number of objects in a listObjectsResponse/listObjectsVersionsResponse.
+	maxDeleteList     = 1000                       // Limit number of objects deleted in a delete call.
+	maxUploadsList    = 10000                      // Limit number of uploads in a listUploadsResponse.
+	maxPartsList      = 10000                      // Limit number of parts in a listPartsResponse.
 )
 
 // LocationResponse - format for location response.
@@ -262,12 +263,11 @@ func (o ObjectVersion) MarshalXML(e *xml.Encoder, start xml.StartElement) error 
 	return e.EncodeElement(objectVersionWrapper(o), start)
 }
 
-// StringMap is a map[string]string.
+// StringMap is a map[string]string
 type StringMap map[string]string
 
 // MarshalXML - StringMap marshals into XML.
 func (s StringMap) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
-
 	tokens := []xml.Token{start}
 
 	for key, value := range s {
@@ -416,17 +416,17 @@ func getObjectLocation(r *http.Request, domains []string, bucket, object string)
 // serialized to match XML and JSON API spec output.
 func generateListBucketsResponse(buckets []BucketInfo) ListBucketsResponse {
 	listbuckets := make([]Bucket, 0, len(buckets))
-	var data = ListBucketsResponse{}
-	var owner = Owner{
+	data := ListBucketsResponse{}
+	owner := Owner{
 		ID:          globalMinioDefaultOwnerID,
 		DisplayName: "minio",
 	}
 
 	for _, bucket := range buckets {
-		var listbucket = Bucket{}
-		listbucket.Name = bucket.Name
-		listbucket.CreationDate = bucket.Created.UTC().Format(iso8601TimeFormat)
-		listbuckets = append(listbuckets, listbucket)
+		listbuckets = append(listbuckets, Bucket{
+			Name:         bucket.Name,
+			CreationDate: bucket.Created.UTC().Format(iso8601TimeFormat),
+		})
 	}
 
 	data.Owner = owner
@@ -438,14 +438,14 @@ func generateListBucketsResponse(buckets []BucketInfo) ListBucketsResponse {
 // generates an ListBucketVersions response for the said bucket with other enumerated options.
 func generateListVersionsResponse(bucket, prefix, marker, versionIDMarker, delimiter, encodingType string, maxKeys int, resp ListObjectVersionsInfo) ListVersionsResponse {
 	versions := make([]ObjectVersion, 0, len(resp.Objects))
-	var owner = Owner{
+	owner := Owner{
 		ID:          globalMinioDefaultOwnerID,
 		DisplayName: "minio",
 	}
-	var data = ListVersionsResponse{}
+	data := ListVersionsResponse{}
 
 	for _, object := range resp.Objects {
-		var content = ObjectVersion{}
+		content := ObjectVersion{}
 		if object.Name == "" {
 			continue
 		}
@@ -485,7 +485,7 @@ func generateListVersionsResponse(bucket, prefix, marker, versionIDMarker, delim
 
 	prefixes := make([]CommonPrefix, 0, len(resp.Prefixes))
 	for _, prefix := range resp.Prefixes {
-		var prefixItem = CommonPrefix{}
+		prefixItem := CommonPrefix{}
 		prefixItem.Prefix = s3EncodeName(prefix, encodingType)
 		prefixes = append(prefixes, prefixItem)
 	}
@@ -496,14 +496,14 @@ func generateListVersionsResponse(bucket, prefix, marker, versionIDMarker, delim
 // generates an ListObjectsV1 response for the said bucket with other enumerated options.
 func generateListObjectsV1Response(bucket, prefix, marker, delimiter, encodingType string, maxKeys int, resp ListObjectsInfo) ListObjectsResponse {
 	contents := make([]Object, 0, len(resp.Objects))
-	var owner = Owner{
+	owner := Owner{
 		ID:          globalMinioDefaultOwnerID,
 		DisplayName: "minio",
 	}
-	var data = ListObjectsResponse{}
+	data := ListObjectsResponse{}
 
 	for _, object := range resp.Objects {
-		var content = Object{}
+		content := Object{}
 		if object.Name == "" {
 			continue
 		}
@@ -534,7 +534,7 @@ func generateListObjectsV1Response(bucket, prefix, marker, delimiter, encodingTy
 
 	prefixes := make([]CommonPrefix, 0, len(resp.Prefixes))
 	for _, prefix := range resp.Prefixes {
-		var prefixItem = CommonPrefix{}
+		prefixItem := CommonPrefix{}
 		prefixItem.Prefix = s3EncodeName(prefix, encodingType)
 		prefixes = append(prefixes, prefixItem)
 	}
@@ -545,14 +545,14 @@ func generateListObjectsV1Response(bucket, prefix, marker, delimiter, encodingTy
 // generates an ListObjectsV2 response for the said bucket with other enumerated options.
 func generateListObjectsV2Response(bucket, prefix, token, nextToken, startAfter, delimiter, encodingType string, fetchOwner, isTruncated bool, maxKeys int, objects []ObjectInfo, prefixes []string, metadata bool) ListObjectsV2Response {
 	contents := make([]Object, 0, len(objects))
-	var owner = Owner{
+	owner := Owner{
 		ID:          globalMinioDefaultOwnerID,
 		DisplayName: "minio",
 	}
-	var data = ListObjectsV2Response{}
+	data := ListObjectsV2Response{}
 
 	for _, object := range objects {
-		var content = Object{}
+		content := Object{}
 		if object.Name == "" {
 			continue
 		}
@@ -570,6 +570,14 @@ func generateListObjectsV2Response(bucket, prefix, token, nextToken, startAfter,
 		content.Owner = owner
 		if metadata {
 			content.UserMetadata = make(StringMap)
+			switch kind, _ := crypto.IsEncrypted(object.UserDefined); kind {
+			case crypto.S3:
+				content.UserMetadata[xhttp.AmzServerSideEncryption] = xhttp.AmzEncryptionAES
+			case crypto.S3KMS:
+				content.UserMetadata[xhttp.AmzServerSideEncryption] = xhttp.AmzEncryptionKMS
+			case crypto.SSEC:
+				content.UserMetadata[xhttp.AmzServerSideEncryptionCustomerAlgorithm] = xhttp.AmzEncryptionAES
+			}
 			for k, v := range CleanMinioInternalMetadataKeys(object.UserDefined) {
 				if strings.HasPrefix(strings.ToLower(k), ReservedMetadataPrefixLower) {
 					// Do not need to send any internal metadata
@@ -599,7 +607,7 @@ func generateListObjectsV2Response(bucket, prefix, token, nextToken, startAfter,
 
 	commonPrefixes := make([]CommonPrefix, 0, len(prefixes))
 	for _, prefix := range prefixes {
-		var prefixItem = CommonPrefix{}
+		prefixItem := CommonPrefix{}
 		prefixItem.Prefix = s3EncodeName(prefix, encodingType)
 		commonPrefixes = append(commonPrefixes, prefixItem)
 	}
@@ -715,14 +723,19 @@ func generateMultiDeleteResponse(quiet bool, deletedObjects []DeletedObject, err
 	if !quiet {
 		deleteResp.DeletedObjects = deletedObjects
 	}
-	if len(errs) == len(deletedObjects) {
-		deleteResp.DeletedObjects = nil
-	}
 	deleteResp.Errors = errs
 	return deleteResp
 }
 
 func writeResponse(w http.ResponseWriter, statusCode int, response []byte, mType mimeType) {
+	if statusCode == 0 {
+		statusCode = 200
+	}
+	// Similar check to http.checkWriteHeaderCode
+	if statusCode < 100 || statusCode > 999 {
+		logger.Error(fmt.Sprintf("invalid WriteHeader code %v", statusCode))
+		statusCode = http.StatusInternalServerError
+	}
 	setCommonHeaders(w)
 	if mType != mimeNone {
 		w.Header().Set(xhttp.ContentType, string(mType))
@@ -731,7 +744,6 @@ func writeResponse(w http.ResponseWriter, statusCode int, response []byte, mType
 	w.WriteHeader(statusCode)
 	if response != nil {
 		w.Write(response)
-		w.(http.Flusher).Flush()
 	}
 }
 
@@ -775,24 +787,22 @@ func writeSuccessResponseHeadersOnly(w http.ResponseWriter) {
 }
 
 // writeErrorRespone writes error headers
-func writeErrorResponse(ctx context.Context, w http.ResponseWriter, err APIError, reqURL *url.URL, browser bool) {
+func writeErrorResponse(ctx context.Context, w http.ResponseWriter, err APIError, reqURL *url.URL) {
 	switch err.Code {
 	case "SlowDown", "XMinioServerNotInitialized", "XMinioReadQuorum", "XMinioWriteQuorum":
 		// Set retry-after header to indicate user-agents to retry request after 120secs.
 		// https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
 		w.Header().Set(xhttp.RetryAfter, "120")
 	case "InvalidRegion":
-		err.Description = fmt.Sprintf("Region does not match; expecting '%s'.", globalServerRegion)
+		err.Description = fmt.Sprintf("Region does not match; expecting '%s'.", globalSite.Region)
 	case "AuthorizationHeaderMalformed":
-		err.Description = fmt.Sprintf("The authorization header is malformed; the region is wrong; expecting '%s'.", globalServerRegion)
-	case "AccessDenied":
-		// The request is from browser and also if browser
-		// is enabled we need to redirect.
-		if browser && globalBrowserEnabled {
-			w.Header().Set(xhttp.Location, minioReservedBucketPath+reqURL.Path)
-			w.WriteHeader(http.StatusTemporaryRedirect)
-			return
-		}
+		err.Description = fmt.Sprintf("The authorization header is malformed; the region is wrong; expecting '%s'.", globalSite.Region)
+	}
+
+	// Similar check to http.checkWriteHeaderCode
+	if err.HTTPStatusCode < 100 || err.HTTPStatusCode > 999 {
+		logger.Error(fmt.Sprintf("invalid WriteHeader code %v from %v", err.HTTPStatusCode, err.Code))
+		err.HTTPStatusCode = http.StatusInternalServerError
 	}
 
 	// Generate error response.
@@ -824,8 +834,8 @@ func writeErrorResponseJSON(ctx context.Context, w http.ResponseWriter, err APIE
 // but accepts the error message directly (this allows messages to be
 // dynamically generated.)
 func writeCustomErrorResponseJSON(ctx context.Context, w http.ResponseWriter, err APIError,
-	errBody string, reqURL *url.URL) {
-
+	errBody string, reqURL *url.URL,
+) {
 	reqInfo := logger.GetReqInfo(ctx)
 	errorResponse := APIErrorResponse{
 		Code:       err.Code,

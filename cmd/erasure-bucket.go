@@ -22,8 +22,8 @@ import (
 	"errors"
 
 	"github.com/minio/minio-go/v7/pkg/s3utils"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/sync/errgroup"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/minio/internal/sync/errgroup"
 )
 
 // list all errors that can be ignore in a bucket operation.
@@ -32,15 +32,17 @@ var bucketOpIgnoredErrs = append(baseIgnoredErrs, errDiskAccessDenied, errUnform
 // list all errors that can be ignored in a bucket metadata operation.
 var bucketMetadataOpIgnoredErrs = append(bucketOpIgnoredErrs, errVolumeNotFound)
 
-/// Bucket operations
+// Bucket operations
 
 // MakeBucket - make a bucket.
-func (er erasureObjects) MakeBucketWithLocation(ctx context.Context, bucket string, opts BucketOptions) error {
+func (er erasureObjects) MakeBucketWithLocation(ctx context.Context, bucket string, opts MakeBucketOptions) error {
 	defer NSUpdated(bucket, slashSeparator)
 
 	// Verify if bucket is valid.
-	if err := s3utils.CheckValidBucketNameStrict(bucket); err != nil {
-		return BucketNameInvalid{Bucket: bucket}
+	if !isMinioMetaBucketName(bucket) {
+		if err := s3utils.CheckValidBucketNameStrict(bucket); err != nil {
+			return BucketNameInvalid{Bucket: bucket}
+		}
 	}
 
 	storageDisks := er.getDisks()
@@ -53,6 +55,11 @@ func (er erasureObjects) MakeBucketWithLocation(ctx context.Context, bucket stri
 		g.Go(func() error {
 			if storageDisks[index] != nil {
 				if err := storageDisks[index].MakeVol(ctx, bucket); err != nil {
+					if opts.ForceCreate && errors.Is(err, errVolumeExists) {
+						// No need to return error when force create was
+						// requested.
+						return nil
+					}
 					if !errors.Is(err, errVolumeExists) {
 						logger.LogIf(ctx, err)
 					}
@@ -64,8 +71,7 @@ func (er erasureObjects) MakeBucketWithLocation(ctx context.Context, bucket stri
 		}, index)
 	}
 
-	writeQuorum := getWriteQuorum(len(storageDisks))
-	err := reduceWriteQuorumErrs(ctx, g.Wait(), bucketOpIgnoredErrs, writeQuorum)
+	err := reduceWriteQuorumErrs(ctx, g.Wait(), bucketOpIgnoredErrs, er.defaultWQuorum())
 	return toObjectErr(err, bucket)
 }
 
@@ -88,11 +94,11 @@ func undoDeleteBucket(storageDisks []StorageAPI, bucket string) {
 }
 
 // getBucketInfo - returns the BucketInfo from one of the load balanced disks.
-func (er erasureObjects) getBucketInfo(ctx context.Context, bucketName string) (bucketInfo BucketInfo, err error) {
+func (er erasureObjects) getBucketInfo(ctx context.Context, bucketName string, opts BucketOptions) (bucketInfo BucketInfo, err error) {
 	storageDisks := er.getDisks()
 
 	g := errgroup.WithNErrs(len(storageDisks))
-	var bucketsInfo = make([]BucketInfo, len(storageDisks))
+	bucketsInfo := make([]BucketInfo, len(storageDisks))
 	// Undo previous make bucket entry on all underlying storage disks.
 	for index := range storageDisks {
 		index := index
@@ -102,9 +108,17 @@ func (er erasureObjects) getBucketInfo(ctx context.Context, bucketName string) (
 			}
 			volInfo, err := storageDisks[index].StatVol(ctx, bucketName)
 			if err != nil {
+				if opts.Deleted {
+					dvi, derr := storageDisks[index].StatVol(ctx, pathJoin(minioMetaBucket, bucketMetaPrefix, deletedBucketsPrefix, bucketName))
+					if derr != nil {
+						return err
+					}
+					bucketsInfo[index] = BucketInfo{Name: bucketName, Deleted: dvi.Created}
+					return nil
+				}
 				return err
 			}
-			bucketsInfo[index] = BucketInfo(volInfo)
+			bucketsInfo[index] = BucketInfo{Name: volInfo.Name, Created: volInfo.Created}
 			return nil
 		}, index)
 	}
@@ -121,45 +135,20 @@ func (er erasureObjects) getBucketInfo(ctx context.Context, bucketName string) (
 	// reduce to one error based on read quorum.
 	// `nil` is deliberately passed for ignoredErrs
 	// because these errors were already ignored.
-	readQuorum := getReadQuorum(len(storageDisks))
-	return BucketInfo{}, reduceReadQuorumErrs(ctx, errs, nil, readQuorum)
+	return BucketInfo{}, reduceReadQuorumErrs(ctx, errs, nil, er.defaultRQuorum())
 }
 
 // GetBucketInfo - returns BucketInfo for a bucket.
-func (er erasureObjects) GetBucketInfo(ctx context.Context, bucket string) (bi BucketInfo, e error) {
-	bucketInfo, err := er.getBucketInfo(ctx, bucket)
+func (er erasureObjects) GetBucketInfo(ctx context.Context, bucket string, opts BucketOptions) (bi BucketInfo, e error) {
+	bucketInfo, err := er.getBucketInfo(ctx, bucket, opts)
 	if err != nil {
 		return bi, toObjectErr(err, bucket)
 	}
 	return bucketInfo, nil
 }
 
-// Dangling buckets should be handled appropriately, in this following situation
-// we actually have quorum error to be `nil` but we have some disks where
-// the bucket delete returned `errVolumeNotEmpty` but this is not correct
-// can only happen if there are dangling objects in a bucket. Under such
-// a situation we simply attempt a full delete of the bucket including
-// the dangling objects. All of this happens under a lock and there
-// is no way a user can create buckets and sneak in objects into namespace,
-// so it is safer to do.
-func deleteDanglingBucket(ctx context.Context, storageDisks []StorageAPI, dErrs []error, bucket string) {
-	for index, err := range dErrs {
-		if err == errVolumeNotEmpty {
-			// Attempt to delete bucket again.
-			if derr := storageDisks[index].DeleteVol(ctx, bucket, false); derr == errVolumeNotEmpty {
-				_ = storageDisks[index].Delete(ctx, bucket, "", true)
-
-				_ = storageDisks[index].DeleteVol(ctx, bucket, false)
-
-				// Cleanup all the previously incomplete multiparts.
-				_ = storageDisks[index].Delete(ctx, minioMetaMultipartBucket, bucket, true)
-			}
-		}
-	}
-}
-
 // DeleteBucket - deletes a bucket.
-func (er erasureObjects) DeleteBucket(ctx context.Context, bucket string, forceDelete bool) error {
+func (er erasureObjects) DeleteBucket(ctx context.Context, bucket string, opts DeleteBucketOptions) error {
 	// Collect if all disks report volume not found.
 	defer NSUpdated(bucket, slashSeparator)
 
@@ -171,13 +160,7 @@ func (er erasureObjects) DeleteBucket(ctx context.Context, bucket string, forceD
 		index := index
 		g.Go(func() error {
 			if storageDisks[index] != nil {
-				if err := storageDisks[index].DeleteVol(ctx, bucket, forceDelete); err != nil {
-					return err
-				}
-				if err := storageDisks[index].Delete(ctx, minioMetaMultipartBucket, bucket, true); err != errFileNotFound {
-					return err
-				}
-				return nil
+				return storageDisks[index].DeleteVol(ctx, bucket, opts.Force)
 			}
 			return errDiskNotFound
 		}, index)
@@ -186,7 +169,7 @@ func (er erasureObjects) DeleteBucket(ctx context.Context, bucket string, forceD
 	// Wait for all the delete vols to finish.
 	dErrs := g.Wait()
 
-	if forceDelete {
+	if opts.Force {
 		for _, err := range dErrs {
 			if err != nil {
 				undoDeleteBucket(storageDisks, bucket)
@@ -197,24 +180,75 @@ func (er erasureObjects) DeleteBucket(ctx context.Context, bucket string, forceD
 		return nil
 	}
 
-	writeQuorum := getWriteQuorum(len(storageDisks))
-	err := reduceWriteQuorumErrs(ctx, dErrs, bucketOpIgnoredErrs, writeQuorum)
-	if err == errErasureWriteQuorum {
+	err := reduceWriteQuorumErrs(ctx, dErrs, bucketOpIgnoredErrs, er.defaultWQuorum())
+	if err == errErasureWriteQuorum && !opts.NoRecreate {
 		undoDeleteBucket(storageDisks, bucket)
 	}
-	if err != nil {
-		return toObjectErr(err, bucket)
+
+	if err == nil || errors.Is(err, errVolumeNotFound) {
+		var purgedDangling bool
+		// At this point we have `err == nil` but some errors might be `errVolumeNotEmpty`
+		// we should proceed to attempt a force delete of such buckets.
+		for index, err := range dErrs {
+			if err == errVolumeNotEmpty && storageDisks[index] != nil {
+				storageDisks[index].RenameFile(ctx, bucket, "", minioMetaTmpDeletedBucket, mustGetUUID())
+				purgedDangling = true
+			}
+		}
+		// if we purged dangling buckets, ignore errVolumeNotFound error.
+		if purgedDangling {
+			err = nil
+		}
+		if opts.SRDeleteOp == MarkDelete {
+			er.markDelete(ctx, minioMetaBucket, pathJoin(bucketMetaPrefix, deletedBucketsPrefix, bucket))
+		}
 	}
 
-	// If we reduce quorum to nil, means we have deleted buckets properly
-	// on some servers in quorum, we should look for volumeNotEmpty errors
-	// and delete those buckets as well.
-	//
-	// let this call succeed, even if client cancels the context
-	// this is to ensure that we don't leave any stale content
-	deleteDanglingBucket(context.Background(), storageDisks, dErrs, bucket)
+	return toObjectErr(err, bucket)
+}
 
-	return nil
+// markDelete creates a vol entry in .minio.sys/buckets/.deleted until site replication
+// syncs the delete to peers
+func (er erasureObjects) markDelete(ctx context.Context, bucket, prefix string) error {
+	storageDisks := er.getDisks()
+	g := errgroup.WithNErrs(len(storageDisks))
+	// Make a volume entry on all underlying storage disks.
+	for index := range storageDisks {
+		index := index
+		if storageDisks[index] == nil {
+			continue
+		}
+		g.Go(func() error {
+			if err := storageDisks[index].MakeVol(ctx, pathJoin(bucket, prefix)); err != nil {
+				if errors.Is(err, errVolumeExists) {
+					return nil
+				}
+				return err
+			}
+			return nil
+		}, index)
+	}
+	err := reduceWriteQuorumErrs(ctx, g.Wait(), bucketOpIgnoredErrs, er.defaultWQuorum())
+	return toObjectErr(err, bucket)
+}
+
+// purgeDelete deletes vol entry in .minio.sys/buckets/.deleted after site replication
+// syncs the delete to peers OR on a new MakeBucket call.
+func (er erasureObjects) purgeDelete(ctx context.Context, bucket, prefix string) error {
+	storageDisks := er.getDisks()
+	g := errgroup.WithNErrs(len(storageDisks))
+	// Make a volume entry on all underlying storage disks.
+	for index := range storageDisks {
+		index := index
+		g.Go(func() error {
+			if storageDisks[index] != nil {
+				return storageDisks[index].DeleteVol(ctx, pathJoin(bucket, prefix), true)
+			}
+			return errDiskNotFound
+		}, index)
+	}
+	err := reduceWriteQuorumErrs(ctx, g.Wait(), bucketOpIgnoredErrs, er.defaultWQuorum())
+	return toObjectErr(err, bucket)
 }
 
 // IsNotificationSupported returns whether bucket notification is applicable for this layer.

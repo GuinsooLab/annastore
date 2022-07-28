@@ -24,14 +24,17 @@ import (
 	"time"
 
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/internal/logger"
 )
 
 // getLocalServerProperty - returns madmin.ServerProperties for only the
 // local endpoints from given list of endpoints
 func getLocalServerProperty(endpointServerPools EndpointServerPools, r *http.Request) madmin.ServerProperties {
 	var localEndpoints Endpoints
-	addr := r.Host
+	addr := globalLocalNodeName
+	if r != nil {
+		addr = r.Host
+	}
 	if globalIsDistErasure {
 		addr = globalLocalNodeName
 	}
@@ -40,7 +43,7 @@ func getLocalServerProperty(endpointServerPools EndpointServerPools, r *http.Req
 		for _, endpoint := range ep.Endpoints {
 			nodeName := endpoint.Host
 			if nodeName == "" {
-				nodeName = r.Host
+				nodeName = addr
 			}
 			if endpoint.IsLocal {
 				// Only proceed for local endpoints
@@ -50,7 +53,7 @@ func getLocalServerProperty(endpointServerPools EndpointServerPools, r *http.Req
 			}
 			_, present := network[nodeName]
 			if !present {
-				if err := isServerResolvable(endpoint, 2*time.Second); err == nil {
+				if err := isServerResolvable(endpoint, 5*time.Second); err == nil {
 					network[nodeName] = string(madmin.ItemOnline)
 				} else {
 					network[nodeName] = string(madmin.ItemOffline)
@@ -61,6 +64,9 @@ func getLocalServerProperty(endpointServerPools EndpointServerPools, r *http.Req
 		}
 	}
 
+	var memstats runtime.MemStats
+	runtime.ReadMemStats(&memstats)
+
 	props := madmin.ServerProperties{
 		State:    string(madmin.ItemInitializing),
 		Endpoint: addr,
@@ -68,8 +74,14 @@ func getLocalServerProperty(endpointServerPools EndpointServerPools, r *http.Req
 		Version:  Version,
 		CommitID: CommitID,
 		Network:  network,
+		MemStats: madmin.MemStats{
+			Alloc:      memstats.Alloc,
+			TotalAlloc: memstats.TotalAlloc,
+			Mallocs:    memstats.Mallocs,
+			Frees:      memstats.Frees,
+			HeapAlloc:  memstats.HeapAlloc,
+		},
 	}
-	runtime.ReadMemStats(&props.MemStats)
 
 	objLayer := newObjectLayerFn()
 	if objLayer != nil && !globalIsGateway {

@@ -1,3 +1,4 @@
+//go:build fips
 // +build fips
 
 // Copyright (c) 2015-2021 MinIO, Inc.
@@ -19,7 +20,5 @@
 
 package cmd
 
-var (
-	// Newer official download info URLs appear earlier below.
-	minioReleaseInfoURL = minioReleaseURL + "minio.fips.sha256sum"
-)
+// Newer official download info URLs appear earlier below.
+var minioReleaseInfoURL = minioReleaseURL + "minio.fips.sha256sum"

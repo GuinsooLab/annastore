@@ -1,6 +1,12 @@
 # MinIO NAS Gateway [![Slack](https://slack.min.io/slack?type=svg)](https://slack.min.io)
 
+> NAS gateway is deprecated and will be removed in future, no more fresh deployments are supported.
+
 MinIO Gateway adds Amazon S3 compatibility to NAS storage. You may run multiple minio instances on the same shared NAS volume as a distributed object gateway.
+
+## Support
+
+Gateway implementations are frozen and are not accepting any new features. Please reports any bugs at <https://github.com/minio/minio/issues> . If you are an existing customer please login to <https://subnet.min.io> for production support.
 
 ## Run MinIO Gateway for NAS Storage
 
@@ -9,11 +15,14 @@ MinIO Gateway adds Amazon S3 compatibility to NAS storage. You may run multiple 
 Please ensure to replace `/shared/nasvol` with actual mount path.
 
 ```
-docker run -p 9000:9000 --name nas-s3 \
+podman run \
+ -p 9000:9000 \
+ -p 9001:9001 \
+ --name nas-s3 \
  -e "MINIO_ROOT_USER=minio" \
  -e "MINIO_ROOT_PASSWORD=minio123" \
  -v /shared/nasvol:/container/vol \
- minio/minio gateway nas /container/vol
+ quay.io/minio/minio gateway nas /container/vol --console-address ":9001"
 ```
 
 ### Using Binary
@@ -24,15 +33,17 @@ export MINIO_ROOT_PASSWORD=minio123
 minio gateway nas /shared/nasvol
 ```
 
-## Test using MinIO Browser
+## Test using MinIO Console
 
-MinIO Gateway comes with an embedded web based object browser. Point your web browser to http://127.0.0.1:9000 to ensure that your server has started successfully.
+MinIO Gateway comes with an embedded web based object browser. Point your web browser to <http://127.0.0.1:9000> to ensure that your server has started successfully.
 
-![Screenshot](https://raw.githubusercontent.com/minio/minio/master/docs/screenshots/minio-browser-gateway.png)
+| Dashboard                                                                                   | Creating a bucket                                                                           |
+| -------------                                                                               | -------------                                                                               |
+| ![Dashboard](https://github.com/minio/minio/blob/master/docs/screenshots/pic1.png?raw=true) | ![Dashboard](https://github.com/minio/minio/blob/master/docs/screenshots/pic2.png?raw=true) |
 
 ## Test using MinIO Client `mc`
 
-`mc` provides a modern alternative to UNIX commands such as ls, cat, cp, mirror, diff etc. It supports filesystems and Amazon S3 compatible cloud storage services.
+`mc` provides a modern alternative to UNIX commands such as ls, cat, cp, mirror, diff, etc. It supports filesystems and Amazon S3 compatible cloud storage services.
 
 ### Configure `mc`
 
@@ -77,26 +88,27 @@ export MINIO_NOTIFY_WEBHOOK_ENDPOINT_1=http://localhost:8080/
 export MINIO_NOTIFY_WEBHOOK_QUEUE_DIR_1=/tmp/webhk
 ```
 
-> NOTE: Please check the docs for the corresponding ENV setting. Alternatively, We can obtain other ENVs in the form `mc admin config set alias/ <sub-sys> --env`
+> NOTE: Please check the docs for the corresponding ENV setting. Alternatively, we can obtain other ENVs in the form `mc admin config set alias/ <sub-sys> --env`
 
 ## Symlink support
 
-NAS gateway implementation allows symlinks on regular files,
+NAS gateway implementation allows symlinks on regular files.
 
 ### Behavior
 
-- For reads symlink resolves to file symlink points to.
+- For reads symlinks resolve to the file the symlink points to.
 - For deletes
-  - Delete of symlink deletes the symlink but not the real file to which the symlink points.
-  - Delete of actual file automatically makes symlink'ed file invisible, dangling symlinks won't be visible.
+  - Deleting a symlink deletes the symlink but not the real file to which the symlink points.
+  - Deleting the real file a symlink points to automatically makes the dangling symlink invisible.
 
 #### Caveats
-- Disallows follow of directory symlinks to avoid security issues, and leaving them as is on namespace makes them very inconsistent.
-- Dangling symlinks are ignored automatically.
 
-*Directory symlinks is not and will not be supported as there are no safe ways to handle them.*
+- Disallows follow of directory symlinks to avoid security issues, and leaving them as is on namespace makes them very inconsistent.
+
+*Directory symlinks are not and will not be supported as there are no safe ways to handle them.*
 
 ## Explore Further
+
 - [`mc` command-line interface](https://docs.min.io/docs/minio-client-quickstart-guide)
 - [`aws` command-line interface](https://docs.min.io/docs/aws-cli-with-minio)
 - [`minio-go` Go SDK](https://docs.min.io/docs/golang-client-quickstart-guide)

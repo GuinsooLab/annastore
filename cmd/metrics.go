@@ -23,11 +23,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/minio/madmin-go"
-	"github.com/minio/minio/cmd/logger"
-	iampolicy "github.com/minio/minio/pkg/iam/policy"
+	"github.com/minio/minio/internal/logger"
+	iampolicy "github.com/minio/pkg/iam/policy"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/common/expfmt"
 )
 
 var (
@@ -93,7 +92,6 @@ func (c *minioCollector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect is called by the Prometheus registry when collecting metrics.
 func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
-
 	// Expose MinIO's version information
 	minioVersionInfo.WithLabelValues(Version, CommitID).Set(1.0)
 
@@ -108,7 +106,11 @@ func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 func nodeHealthMetricsPrometheus(ch chan<- prometheus.Metric) {
-	nodesUp, nodesDown := GetPeerOnlineCount()
+	if globalIsGateway {
+		return
+	}
+
+	nodesUp, nodesDown := globalNotificationSys.GetPeerOnlineCount()
 	ch <- prometheus.MustNewConstMetric(
 		prometheus.NewDesc(
 			prometheus.BuildFQName(minioNamespace, "nodes", "online"),
@@ -130,7 +132,7 @@ func nodeHealthMetricsPrometheus(ch chan<- prometheus.Metric) {
 // collects healing specific metrics for MinIO instance in Prometheus specific format
 // and sends to given channel
 func healingMetricsPrometheus(ch chan<- prometheus.Metric) {
-	if !globalIsErasure {
+	if globalIsGateway {
 		return
 	}
 	bgSeq, exists := globalBackgroundHealState.getHealSequenceByToken(bgHealingUUID)
@@ -189,7 +191,7 @@ func healingMetricsPrometheus(ch chan<- prometheus.Metric) {
 // collects gateway specific metrics for MinIO instance in Prometheus specific format
 // and sends to given channel
 func gatewayMetricsPrometheus(ch chan<- prometheus.Metric) {
-	if !globalIsGateway || (globalGatewayName != S3BackendGateway && globalGatewayName != AzureBackendGateway && globalGatewayName != GCSBackendGateway) {
+	if !globalIsGateway || (globalGatewayName != S3BackendGateway) {
 		return
 	}
 
@@ -433,67 +435,6 @@ func networkMetricsPrometheus(ch chan<- prometheus.Metric) {
 	)
 }
 
-// get the most current of in-memory replication stats  and data usage info from crawler.
-func getLatestReplicationStats(bucket string, u madmin.BucketUsageInfo) (s BucketReplicationStats) {
-	bucketStats := globalNotificationSys.GetClusterBucketStats(GlobalContext, bucket)
-
-	replStats := BucketReplicationStats{}
-	for _, bucketStat := range bucketStats {
-		replStats.FailedCount += bucketStat.ReplicationStats.FailedCount
-		replStats.FailedSize += bucketStat.ReplicationStats.FailedSize
-		replStats.PendingCount += bucketStat.ReplicationStats.PendingCount
-		replStats.PendingSize += bucketStat.ReplicationStats.PendingSize
-		replStats.ReplicaSize += bucketStat.ReplicationStats.ReplicaSize
-		replStats.ReplicatedSize += bucketStat.ReplicationStats.ReplicatedSize
-	}
-	usageStat := globalReplicationStats.GetInitialUsage(bucket)
-	replStats.FailedCount += usageStat.FailedCount
-	replStats.FailedSize += usageStat.FailedSize
-	replStats.PendingCount += usageStat.PendingCount
-	replStats.PendingSize += usageStat.PendingSize
-	replStats.ReplicaSize += usageStat.ReplicaSize
-	replStats.ReplicatedSize += usageStat.ReplicatedSize
-
-	// use in memory replication stats if it is ahead of usage info.
-	if replStats.ReplicatedSize >= u.ReplicatedSize {
-		s.ReplicatedSize = replStats.ReplicatedSize
-	} else {
-		s.ReplicatedSize = u.ReplicatedSize
-	}
-
-	if replStats.PendingSize > u.ReplicationPendingSize {
-		s.PendingSize = replStats.PendingSize
-	} else {
-		s.PendingSize = u.ReplicationPendingSize
-	}
-
-	if replStats.FailedSize > u.ReplicationFailedSize {
-		s.FailedSize = replStats.FailedSize
-	} else {
-		s.FailedSize = u.ReplicationFailedSize
-	}
-
-	if replStats.ReplicaSize > u.ReplicaSize {
-		s.ReplicaSize = replStats.ReplicaSize
-	} else {
-		s.ReplicaSize = u.ReplicaSize
-	}
-
-	if replStats.PendingCount > u.ReplicationPendingCount {
-		s.PendingCount = replStats.PendingCount
-	} else {
-		s.PendingCount = u.ReplicationPendingCount
-	}
-
-	if replStats.FailedCount > u.ReplicationFailedCount {
-		s.FailedCount = replStats.FailedCount
-	} else {
-		s.FailedCount = u.ReplicationFailedCount
-	}
-
-	return s
-}
-
 // Populates prometheus with bucket usage metrics, this metrics
 // is only enabled if scanner is enabled.
 func bucketUsageMetricsPrometheus(ch chan<- prometheus.Metric) {
@@ -539,15 +480,6 @@ func bucketUsageMetricsPrometheus(ch chan<- prometheus.Metric) {
 		)
 		ch <- prometheus.MustNewConstMetric(
 			prometheus.NewDesc(
-				prometheus.BuildFQName("bucket", "replication", "pending_size"),
-				"Total capacity pending to be replicated",
-				[]string{"bucket"}, nil),
-			prometheus.GaugeValue,
-			float64(stat.PendingSize),
-			bucket,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			prometheus.NewDesc(
 				prometheus.BuildFQName("bucket", "replication", "failed_size"),
 				"Total capacity failed to replicate at least once",
 				[]string{"bucket"}, nil),
@@ -571,15 +503,6 @@ func bucketUsageMetricsPrometheus(ch chan<- prometheus.Metric) {
 				[]string{"bucket"}, nil),
 			prometheus.GaugeValue,
 			float64(stat.ReplicaSize),
-			bucket,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			prometheus.NewDesc(
-				prometheus.BuildFQName("bucket", "replication", "pending_count"),
-				"Total replication operations pending",
-				[]string{"bucket"}, nil),
-			prometheus.GaugeValue,
-			float64(stat.PendingCount),
 			bucket,
 		)
 		ch <- prometheus.MustNewConstMetric(
@@ -654,7 +577,7 @@ func storageMetricsPrometheus(ch chan<- prometheus.Metric) {
 			"Total usable capacity online in the cluster",
 			nil, nil),
 		prometheus.GaugeValue,
-		GetTotalUsableCapacity(server.Disks, s),
+		float64(GetTotalUsableCapacity(server.Disks, s)),
 	)
 	// Report total usable capacity free
 	ch <- prometheus.MustNewConstMetric(
@@ -663,7 +586,7 @@ func storageMetricsPrometheus(ch chan<- prometheus.Metric) {
 			"Total free usable capacity online in the cluster",
 			nil, nil),
 		prometheus.GaugeValue,
-		GetTotalUsableCapacityFree(server.Disks, s),
+		float64(GetTotalUsableCapacityFree(server.Disks, s)),
 	)
 
 	// MinIO Offline Disks per node
@@ -723,50 +646,78 @@ func storageMetricsPrometheus(ch chan<- prometheus.Metric) {
 }
 
 func metricsHandler() http.Handler {
-
 	registry := prometheus.NewRegistry()
 
-	err := registry.Register(minioVersionInfo)
-	logger.LogIf(GlobalContext, err)
+	logger.CriticalIf(GlobalContext, registry.Register(minioVersionInfo))
 
-	err = registry.Register(httpRequestsDuration)
-	logger.LogIf(GlobalContext, err)
-
-	err = registry.Register(newMinioCollector())
-	logger.LogIf(GlobalContext, err)
+	logger.CriticalIf(GlobalContext, registry.Register(newMinioCollector()))
 
 	gatherers := prometheus.Gatherers{
 		prometheus.DefaultGatherer,
 		registry,
 	}
-	// Delegate http serving to Prometheus client library, which will call collector.Collect.
-	return promhttp.InstrumentMetricHandler(
-		registry,
-		promhttp.HandlerFor(gatherers,
-			promhttp.HandlerOpts{
-				ErrorHandling: promhttp.ContinueOnError,
-			}),
-	)
 
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tc, ok := r.Context().Value(contextTraceReqKey).(*traceCtxt)
+		if ok {
+			tc.funcName = "handler.MetricsLegacy"
+			tc.responseRecorder.LogErrBody = true
+		}
+
+		mfs, err := gatherers.Gather()
+		if err != nil {
+			if len(mfs) == 0 {
+				writeErrorResponseJSON(r.Context(), w, toAdminAPIErr(r.Context(), err), r.URL)
+				return
+			}
+		}
+
+		contentType := expfmt.Negotiate(r.Header)
+		w.Header().Set("Content-Type", string(contentType))
+
+		enc := expfmt.NewEncoder(w, contentType)
+		for _, mf := range mfs {
+			if err := enc.Encode(mf); err != nil {
+				logger.LogIf(r.Context(), err)
+				return
+			}
+		}
+		if closer, ok := enc.(expfmt.Closer); ok {
+			closer.Close()
+		}
+	})
 }
 
 // AuthMiddleware checks if the bearer token is valid and authorized.
 func AuthMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		claims, owner, authErr := webRequestAuthenticate(r)
+		tc, ok := r.Context().Value(contextTraceReqKey).(*traceCtxt)
+
+		claims, groups, owner, authErr := metricsRequestAuthenticate(r)
 		if authErr != nil || !claims.VerifyIssuer("prometheus", true) {
-			w.WriteHeader(http.StatusForbidden)
+			if ok {
+				tc.funcName = "handler.MetricsAuth"
+				tc.responseRecorder.LogErrBody = true
+			}
+
+			writeErrorResponseJSON(r.Context(), w, toAdminAPIErr(r.Context(), errAuthentication), r.URL)
 			return
 		}
 		// For authenticated users apply IAM policy.
 		if !globalIAMSys.IsAllowed(iampolicy.Args{
 			AccountName:     claims.AccessKey,
+			Groups:          groups,
 			Action:          iampolicy.PrometheusAdminAction,
 			ConditionValues: getConditionValues(r, "", claims.AccessKey, claims.Map()),
 			IsOwner:         owner,
 			Claims:          claims.Map(),
 		}) {
-			w.WriteHeader(http.StatusForbidden)
+			if ok {
+				tc.funcName = "handler.MetricsAuth"
+				tc.responseRecorder.LogErrBody = true
+			}
+
+			writeErrorResponseJSON(r.Context(), w, toAdminAPIErr(r.Context(), errAuthentication), r.URL)
 			return
 		}
 		h.ServeHTTP(w, r)

@@ -128,6 +128,12 @@ func TestNewEndpoints(t *testing.T) {
 }
 
 func TestCreateEndpoints(t *testing.T) {
+	tempGlobalMinioPort := globalMinioPort
+	defer func() {
+		globalMinioPort = tempGlobalMinioPort
+	}()
+	globalMinioPort = "9000"
+
 	// Filter ipList by IPs those do not start with '127.'.
 	nonLoopBackIPs := localIP4.FuncMatch(func(ip string, matchString string) bool {
 		return !net.ParseIP(ip).IsLoopback()
@@ -225,20 +231,25 @@ func TestCreateEndpoints(t *testing.T) {
 	}{
 		{"localhost", [][]string{}, "", Endpoints{}, -1, fmt.Errorf("address localhost: missing port in address")},
 
-		// FS Setup
+		// Erasure Single Drive
 		{"localhost:9000", [][]string{{"http://localhost/d1"}}, "", Endpoints{}, -1, fmt.Errorf("use path style endpoint for FS setup")},
-		{":443", [][]string{{"/d1"}}, ":443", Endpoints{Endpoint{URL: &url.URL{Path: mustAbs("/d1")}, IsLocal: true}}, FSSetupType, nil},
-		{"localhost:10000", [][]string{{"/d1"}}, "localhost:10000", Endpoints{Endpoint{URL: &url.URL{Path: mustAbs("/d1")}, IsLocal: true}}, FSSetupType, nil},
+		{":443", [][]string{{"/d1"}}, ":443", Endpoints{Endpoint{URL: &url.URL{Path: mustAbs("/d1")}, IsLocal: true}}, ErasureSDSetupType, nil},
+		{"localhost:10000", [][]string{{"/d1"}}, "localhost:10000", Endpoints{Endpoint{URL: &url.URL{Path: mustAbs("/d1")}, IsLocal: true}}, ErasureSDSetupType, nil},
 		{"localhost:9000", [][]string{{"https://127.0.0.1:9000/d1", "https://localhost:9001/d1", "https://example.com/d1", "https://example.com/d2"}}, "", Endpoints{}, -1, fmt.Errorf("path '/d1' can not be served by different port on same address")},
 
 		// Erasure Setup with PathEndpointType
-		{":1234", [][]string{{"/d1", "/d2", "/d3", "/d4"}}, ":1234",
+		{
+			":1234",
+			[][]string{{"/d1", "/d2", "/d3", "/d4"}},
+			":1234",
 			Endpoints{
 				Endpoint{URL: &url.URL{Path: mustAbs("/d1")}, IsLocal: true},
 				Endpoint{URL: &url.URL{Path: mustAbs("/d2")}, IsLocal: true},
 				Endpoint{URL: &url.URL{Path: mustAbs("/d3")}, IsLocal: true},
 				Endpoint{URL: &url.URL{Path: mustAbs("/d4")}, IsLocal: true},
-			}, ErasureSetupType, nil},
+			},
+			ErasureSetupType, nil,
+		},
 		// DistErasure Setup with URLEndpointType
 		{":9000", [][]string{{"http://localhost/d1", "http://localhost/d2", "http://localhost/d3", "http://localhost/d4"}}, ":9000", Endpoints{
 			Endpoint{URL: &url.URL{Scheme: "http", Host: "localhost", Path: "/d1"}, IsLocal: true},
@@ -333,17 +344,29 @@ func TestCreateEndpoints(t *testing.T) {
 // So it means that if you have say localhost:9000 and localhost:9001 as endpointArgs then localhost:9001
 // is considered a remote service from localhost:9000 perspective.
 func TestGetLocalPeer(t *testing.T) {
+	tempGlobalMinioPort := globalMinioPort
+	defer func() {
+		globalMinioPort = tempGlobalMinioPort
+	}()
+	globalMinioPort = "9000"
+
 	testCases := []struct {
 		endpointArgs   []string
 		expectedResult string
 	}{
 		{[]string{"/d1", "/d2", "d3", "d4"}, "127.0.0.1:9000"},
-		{[]string{"http://localhost:9000/d1", "http://localhost:9000/d2", "http://example.org:9000/d3", "http://example.com:9000/d4"},
-			"localhost:9000"},
-		{[]string{"http://localhost:9000/d1", "http://example.org:9000/d2", "http://example.com:9000/d3", "http://example.net:9000/d4"},
-			"localhost:9000"},
-		{[]string{"http://localhost:9000/d1", "http://localhost:9001/d2", "http://localhost:9002/d3", "http://localhost:9003/d4"},
-			"localhost:9000"},
+		{
+			[]string{"http://localhost:9000/d1", "http://localhost:9000/d2", "http://example.org:9000/d3", "http://example.com:9000/d4"},
+			"localhost:9000",
+		},
+		{
+			[]string{"http://localhost:9000/d1", "http://example.org:9000/d2", "http://example.com:9000/d3", "http://example.net:9000/d4"},
+			"localhost:9000",
+		},
+		{
+			[]string{"http://localhost:9000/d1", "http://localhost:9001/d2", "http://localhost:9002/d3", "http://localhost:9003/d4"},
+			"localhost:9000",
+		},
 	}
 
 	for i, testCase := range testCases {

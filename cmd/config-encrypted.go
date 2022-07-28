@@ -26,10 +26,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/cmd/config"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/kms"
-	etcd "go.etcd.io/etcd/clientv3"
+	"github.com/minio/minio/internal/config"
+	"github.com/minio/minio/internal/kms"
+	"github.com/minio/minio/internal/logger"
+	etcd "go.etcd.io/etcd/client/v3"
 )
 
 func handleEncryptedConfigBackend(objAPI ObjectLayer) error {
@@ -69,14 +69,12 @@ func migrateIAMConfigsEtcdToEncrypted(ctx context.Context, client *etcd.Client) 
 		return err
 	}
 
-	if encrypted {
-		if GlobalKMS != nil {
-			stat, err := GlobalKMS.Stat()
-			if err != nil {
-				return err
-			}
-			logger.Info("Attempting to re-encrypt config, IAM users and policies on MinIO with %q (%s)", stat.DefaultKey, stat.Name)
+	if encrypted && GlobalKMS != nil {
+		stat, err := GlobalKMS.Stat(ctx)
+		if err != nil {
+			return err
 		}
+		logger.Info(fmt.Sprintf("Attempting to re-encrypt IAM users and policies on etcd with %q (%s)", stat.DefaultKey, stat.Name))
 	}
 
 	listCtx, cancel := context.WithTimeout(ctx, 1*time.Minute)
@@ -97,15 +95,28 @@ func migrateIAMConfigsEtcdToEncrypted(ctx context.Context, client *etcd.Client) 
 		}
 
 		if !utf8.Valid(data) {
-			data, err = madmin.DecryptData(globalActiveCred.String(), bytes.NewReader(data))
+			pdata, err := madmin.DecryptData(globalActiveCred.String(), bytes.NewReader(data))
 			if err != nil {
-				return fmt.Errorf("Decrypting config failed %w, possibly credentials are incorrect", err)
+				if GlobalKMS != nil {
+					pdata, err = config.DecryptBytes(GlobalKMS, data, kms.Context{
+						minioMetaBucket: path.Join(minioMetaBucket, string(kv.Key)),
+					})
+					if err != nil {
+						pdata, err = config.DecryptBytes(GlobalKMS, data, kms.Context{
+							minioMetaBucket: string(kv.Key),
+						})
+						if err != nil {
+							return fmt.Errorf("Decrypting IAM config failed %w, possibly credentials are incorrect", err)
+						}
+					}
+				}
 			}
+			data = pdata
 		}
 
 		if GlobalKMS != nil {
 			data, err = config.EncryptBytes(GlobalKMS, data, kms.Context{
-				minioMetaBucket: string(kv.Key),
+				minioMetaBucket: path.Join(minioMetaBucket, string(kv.Key)),
 			})
 			if err != nil {
 				return err
@@ -117,10 +128,8 @@ func migrateIAMConfigsEtcdToEncrypted(ctx context.Context, client *etcd.Client) 
 		}
 	}
 
-	if encrypted {
-		if GlobalKMS != nil {
-			logger.Info("Migration of encrypted config data completed. All config data is now encrypted.")
-		}
+	if encrypted && GlobalKMS != nil {
+		logger.Info("Migration of encrypted IAM config data completed. All data is now encrypted on etcd.")
 	}
 	return deleteKeyEtcd(ctx, client, backendEncryptedFile)
 }
@@ -129,14 +138,12 @@ func migrateConfigPrefixToEncrypted(objAPI ObjectLayer, encrypted bool) error {
 	if !encrypted {
 		return nil
 	}
-	if encrypted {
-		if GlobalKMS != nil {
-			stat, err := GlobalKMS.Stat()
-			if err != nil {
-				return err
-			}
-			logger.Info("Attempting to re-encrypt config, IAM users and policies on MinIO with %q (%s)", stat.DefaultKey, stat.Name)
+	if encrypted && GlobalKMS != nil {
+		stat, err := GlobalKMS.Stat(context.Background())
+		if err != nil {
+			return err
 		}
+		logger.Info(fmt.Sprintf("Attempting to re-encrypt config, IAM users and policies on MinIO with %q (%s)", stat.DefaultKey, stat.Name))
 	}
 
 	var marker string
@@ -175,10 +182,8 @@ func migrateConfigPrefixToEncrypted(objAPI ObjectLayer, encrypted bool) error {
 		}
 		marker = res.NextMarker
 	}
-	if encrypted {
-		if GlobalKMS != nil {
-			logger.Info("Migration of encrypted config data completed. All config data is now encrypted.")
-		}
+	if encrypted && GlobalKMS != nil {
+		logger.Info("Migration of encrypted config data completed. All config data is now encrypted.")
 	}
-	return deleteConfig(GlobalContext, globalObjectAPI, backendEncryptedFile)
+	return deleteConfig(GlobalContext, objAPI, backendEncryptedFile)
 }

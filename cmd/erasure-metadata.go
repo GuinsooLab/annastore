@@ -19,18 +19,22 @@ package cmd
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/bucket/replication"
-	"github.com/minio/minio/pkg/sync/errgroup"
+	"github.com/minio/minio/internal/bucket/replication"
+	"github.com/minio/minio/internal/hash/sha256"
+	xhttp "github.com/minio/minio/internal/http"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/minio/internal/sync/errgroup"
 )
+
+// Object was stored with additional erasure codes due to degraded system at upload time
+const minIOErasureUpgraded = "x-minio-internal-erasure-upgraded"
 
 const erasureAlgorithm = "rs-vandermonde"
 
@@ -95,15 +99,15 @@ func (fi FileInfo) IsValid() bool {
 		fi.Erasure.Index <= dataBlocks+parityBlocks &&
 		len(fi.Erasure.Distribution) == (dataBlocks+parityBlocks))
 	return ((dataBlocks >= parityBlocks) &&
-		(dataBlocks != 0) && (parityBlocks != 0) &&
+		(dataBlocks > 0) && (parityBlocks >= 0) &&
 		correctIndexes)
 }
 
 // ToObjectInfo - Converts metadata to object info.
-func (fi FileInfo) ToObjectInfo(bucket, object string) ObjectInfo {
+func (fi FileInfo) ToObjectInfo(bucket, object string, versioned bool) ObjectInfo {
 	object = decodeDirObject(object)
 	versionID := fi.VersionID
-	if (globalBucketVersioningSys.Enabled(bucket) || globalBucketVersioningSys.Suspended(bucket)) && versionID == "" {
+	if versioned && versionID == "" {
 		versionID = nullVersionID
 	}
 
@@ -145,14 +149,18 @@ func (fi FileInfo) ToObjectInfo(bucket, object string) ObjectInfo {
 	}
 
 	// Add replication status to the object info
-	objInfo.ReplicationStatus = replication.StatusType(fi.Metadata[xhttp.AmzBucketReplicationStatus])
-	if fi.Deleted {
-		objInfo.ReplicationStatus = replication.StatusType(fi.DeleteMarkerReplicationStatus)
-	}
+	objInfo.ReplicationStatusInternal = fi.ReplicationState.ReplicationStatusInternal
+	objInfo.VersionPurgeStatusInternal = fi.ReplicationState.VersionPurgeStatusInternal
+	objInfo.ReplicationStatus = fi.ReplicationState.CompositeReplicationStatus()
 
-	objInfo.TransitionStatus = fi.TransitionStatus
-	objInfo.transitionedObjName = fi.TransitionedObjName
-	objInfo.TransitionTier = fi.TransitionTier
+	objInfo.VersionPurgeStatus = fi.ReplicationState.CompositeVersionPurgeStatus()
+	objInfo.TransitionedObject = TransitionedObject{
+		Name:        fi.TransitionedObjName,
+		VersionID:   fi.TransitionVersionID,
+		Status:      fi.TransitionStatus,
+		FreeVersion: fi.TierFreeVersion(),
+		Tier:        fi.TransitionTier,
+	}
 
 	// etag/md5Sum has already been extracted. We need to
 	// remove to avoid it from appearing as part of
@@ -170,7 +178,7 @@ func (fi FileInfo) ToObjectInfo(bucket, object string) ObjectInfo {
 		objInfo.StorageClass = globalMinioDefaultStorageClass
 	}
 
-	objInfo.VersionPurgeStatus = fi.VersionPurgeStatus
+	objInfo.VersionPurgeStatus = fi.VersionPurgeStatus()
 	// set restore status for transitioned object
 	restoreHdr, ok := fi.Metadata[xhttp.AmzRestore]
 	if ok {
@@ -181,6 +189,41 @@ func (fi FileInfo) ToObjectInfo(bucket, object string) ObjectInfo {
 	}
 	// Success.
 	return objInfo
+}
+
+// TransitionInfoEquals returns true if transition related information are equal, false otherwise.
+func (fi FileInfo) TransitionInfoEquals(ofi FileInfo) bool {
+	switch {
+	case fi.TransitionStatus != ofi.TransitionStatus,
+		fi.TransitionTier != ofi.TransitionTier,
+		fi.TransitionedObjName != ofi.TransitionedObjName,
+		fi.TransitionVersionID != ofi.TransitionVersionID:
+		return false
+	}
+	return true
+}
+
+// MetadataEquals returns true if FileInfos Metadata maps are equal, false otherwise.
+func (fi FileInfo) MetadataEquals(ofi FileInfo) bool {
+	if len(fi.Metadata) != len(ofi.Metadata) {
+		return false
+	}
+	for k, v := range fi.Metadata {
+		if ov, ok := ofi.Metadata[k]; !ok || ov != v {
+			return false
+		}
+	}
+	return true
+}
+
+// ReplicationInfoEquals returns true if server-side replication related fields are equal, false otherwise.
+func (fi FileInfo) ReplicationInfoEquals(ofi FileInfo) bool {
+	switch {
+	case fi.MarkDeleted != ofi.MarkDeleted,
+		!fi.ReplicationState.Equal(ofi.ReplicationState):
+		return false
+	}
+	return true
 }
 
 // objectPartIndex - returns the index of matching object part number.
@@ -194,12 +237,14 @@ func objectPartIndex(parts []ObjectPartInfo, partNumber int) int {
 }
 
 // AddObjectPart - add a new object part in order.
-func (fi *FileInfo) AddObjectPart(partNumber int, partETag string, partSize int64, actualSize int64) {
+func (fi *FileInfo) AddObjectPart(partNumber int, partETag string, partSize, actualSize int64, modTime time.Time, idx []byte) {
 	partInfo := ObjectPartInfo{
 		Number:     partNumber,
 		ETag:       partETag,
 		Size:       partSize,
 		ActualSize: actualSize,
+		ModTime:    modTime,
+		Index:      idx,
 	}
 
 	// Update part info if it already exists.
@@ -239,21 +284,36 @@ func (fi FileInfo) ObjectToPartOffset(ctx context.Context, offset int64) (partIn
 	return 0, 0, InvalidRange{}
 }
 
-func findFileInfoInQuorum(ctx context.Context, metaArr []FileInfo, modTime time.Time, dataDir string, quorum int) (FileInfo, error) {
+func findFileInfoInQuorum(ctx context.Context, metaArr []FileInfo, modTime time.Time, quorum int) (FileInfo, error) {
 	// with less quorum return error.
-	if quorum < 2 {
+	if quorum < 1 {
 		return FileInfo{}, errErasureReadQuorum
 	}
 	metaHashes := make([]string, len(metaArr))
 	h := sha256.New()
 	for i, meta := range metaArr {
-		if meta.IsValid() && meta.ModTime.Equal(modTime) && meta.DataDir == dataDir {
+		if meta.IsValid() && meta.ModTime.Equal(modTime) {
+			fmt.Fprintf(h, "%v", meta.XLV1)
+			fmt.Fprintf(h, "%v", meta.GetDataDir())
 			for _, part := range meta.Parts {
-				h.Write([]byte(fmt.Sprintf("part.%d", part.Number)))
+				fmt.Fprintf(h, "part.%d", part.Number)
 			}
-			h.Write([]byte(fmt.Sprintf("%v", meta.Erasure.Distribution)))
-			// make sure that length of Data is same
-			h.Write([]byte(fmt.Sprintf("%v", len(meta.Data))))
+			fmt.Fprintf(h, "%v", meta.Erasure.Distribution)
+
+			// ILM transition fields
+			fmt.Fprint(h, meta.TransitionStatus)
+			fmt.Fprint(h, meta.TransitionTier)
+			fmt.Fprint(h, meta.TransitionedObjName)
+			fmt.Fprint(h, meta.TransitionVersionID)
+
+			// Server-side replication fields
+			fmt.Fprintf(h, "%v", meta.MarkDeleted)
+			fmt.Fprint(h, meta.Metadata[string(meta.ReplicationState.ReplicaStatus)])
+			fmt.Fprint(h, meta.Metadata[meta.ReplicationState.ReplicationTimeStamp.Format(http.TimeFormat)])
+			fmt.Fprint(h, meta.Metadata[meta.ReplicationState.ReplicaTimeStamp.Format(http.TimeFormat)])
+			fmt.Fprint(h, meta.Metadata[meta.ReplicationState.ReplicationStatusInternal])
+			fmt.Fprint(h, meta.Metadata[meta.ReplicationState.VersionPurgeStatusInternal])
+
 			metaHashes[i] = hex.EncodeToString(h.Sum(nil))
 			h.Reset()
 		}
@@ -291,10 +351,21 @@ func findFileInfoInQuorum(ctx context.Context, metaArr []FileInfo, modTime time.
 	return FileInfo{}, errErasureReadQuorum
 }
 
+func pickValidDiskTimeWithQuorum(metaArr []FileInfo, quorum int) time.Time {
+	diskMTimes := listObjectDiskMtimes(metaArr)
+
+	diskMTime, diskMaxima := commonTimeAndOccurence(diskMTimes, shardDiskTimeDelta)
+	if diskMaxima >= quorum {
+		return diskMTime
+	}
+
+	return timeSentinel
+}
+
 // pickValidFileInfo - picks one valid FileInfo content and returns from a
 // slice of FileInfo.
-func pickValidFileInfo(ctx context.Context, metaArr []FileInfo, modTime time.Time, dataDir string, quorum int) (FileInfo, error) {
-	return findFileInfoInQuorum(ctx, metaArr, modTime, dataDir, quorum)
+func pickValidFileInfo(ctx context.Context, metaArr []FileInfo, modTime time.Time, quorum int) (FileInfo, error) {
+	return findFileInfoInQuorum(ctx, metaArr, modTime, quorum)
 }
 
 // writeUniqueFileInfo - writes unique `xl.meta` content for each disk concurrently.
@@ -330,21 +401,41 @@ func writeUniqueFileInfo(ctx context.Context, disks []StorageAPI, bucket, prefix
 // writeQuorum is the min required disks to write data.
 func objectQuorumFromMeta(ctx context.Context, partsMetaData []FileInfo, errs []error, defaultParityCount int) (objectReadQuorum, objectWriteQuorum int, err error) {
 	// get the latest updated Metadata and a count of all the latest updated FileInfo(s)
-	latestFileInfo, err := getLatestFileInfo(ctx, partsMetaData, errs)
+	latestFileInfo, err := getLatestFileInfo(ctx, partsMetaData, defaultParityCount, errs)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	if !latestFileInfo.IsValid() {
-		return 0, 0, errErasureReadQuorum
+	if latestFileInfo.Deleted {
+		// special case when parity is '0'
+		if defaultParityCount == 0 {
+			return len(partsMetaData), len(partsMetaData), nil
+		}
+		// For delete markers do not use 'defaultParityCount' as it is not expected to be the case.
+		// Use maximum allowed read quorum instead, writeQuorum+1 is returned for compatibility sake
+		// but there are no callers that shall be using this.
+		readQuorum := len(partsMetaData) / 2
+		return readQuorum, readQuorum + 1, nil
 	}
 
 	parityBlocks := globalStorageClass.GetParityForSC(latestFileInfo.Metadata[xhttp.AmzStorageClass])
-	if parityBlocks <= 0 {
+	if parityBlocks < 0 {
 		parityBlocks = defaultParityCount
 	}
 
-	dataBlocks := len(partsMetaData) - parityBlocks
+	// For erasure code upgraded objects choose the parity
+	// blocks saved internally, instead of 'defaultParityCount'
+	if _, ok := latestFileInfo.Metadata[minIOErasureUpgraded]; ok {
+		if latestFileInfo.Erasure.ParityBlocks != 0 {
+			parityBlocks = latestFileInfo.Erasure.ParityBlocks
+		}
+	}
+
+	dataBlocks := latestFileInfo.Erasure.DataBlocks
+	if dataBlocks == 0 {
+		dataBlocks = len(partsMetaData) - parityBlocks
+	}
+
 	writeQuorum := dataBlocks
 	if dataBlocks == parityBlocks {
 		writeQuorum++
@@ -353,4 +444,103 @@ func objectQuorumFromMeta(ctx context.Context, partsMetaData []FileInfo, errs []
 	// Since all the valid erasure code meta updated at the same time are equivalent, pass dataBlocks
 	// from latestFileInfo to get the quorum
 	return dataBlocks, writeQuorum, nil
+}
+
+const (
+	tierFVID     = "tier-free-versionID"
+	tierFVMarker = "tier-free-marker"
+)
+
+// SetTierFreeVersionID sets free-version's versionID. This method is used by
+// object layer to pass down a versionID to set for a free-version that may be
+// created.
+func (fi *FileInfo) SetTierFreeVersionID(versionID string) {
+	if fi.Metadata == nil {
+		fi.Metadata = make(map[string]string)
+	}
+	fi.Metadata[ReservedMetadataPrefixLower+tierFVID] = versionID
+}
+
+// TierFreeVersionID returns the free-version's version id.
+func (fi *FileInfo) TierFreeVersionID() string {
+	return fi.Metadata[ReservedMetadataPrefixLower+tierFVID]
+}
+
+// SetTierFreeVersion sets fi as a free-version. This method is used by
+// lower layers to indicate a free-version.
+func (fi *FileInfo) SetTierFreeVersion() {
+	if fi.Metadata == nil {
+		fi.Metadata = make(map[string]string)
+	}
+	fi.Metadata[ReservedMetadataPrefixLower+tierFVMarker] = ""
+}
+
+// TierFreeVersion returns true if version is a free-version.
+func (fi *FileInfo) TierFreeVersion() bool {
+	_, ok := fi.Metadata[ReservedMetadataPrefixLower+tierFVMarker]
+	return ok
+}
+
+// IsRestoreObjReq returns true if fi corresponds to a RestoreObject request.
+func (fi *FileInfo) IsRestoreObjReq() bool {
+	if restoreHdr, ok := fi.Metadata[xhttp.AmzRestore]; ok {
+		if restoreStatus, err := parseRestoreObjStatus(restoreHdr); err == nil {
+			if !restoreStatus.Ongoing() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// VersionPurgeStatus returns overall version purge status for this object version across targets
+func (fi *FileInfo) VersionPurgeStatus() VersionPurgeStatusType {
+	return fi.ReplicationState.CompositeVersionPurgeStatus()
+}
+
+// DeleteMarkerReplicationStatus returns overall replication status for this delete marker version across targets
+func (fi *FileInfo) DeleteMarkerReplicationStatus() replication.StatusType {
+	if fi.Deleted {
+		return fi.ReplicationState.CompositeReplicationStatus()
+	}
+	return replication.StatusType("")
+}
+
+// GetInternalReplicationState is a wrapper method to fetch internal replication state from the map m
+func GetInternalReplicationState(m map[string][]byte) ReplicationState {
+	m1 := make(map[string]string, len(m))
+	for k, v := range m {
+		m1[k] = string(v)
+	}
+	return getInternalReplicationState(m1)
+}
+
+// getInternalReplicationState fetches internal replication state from the map m
+func getInternalReplicationState(m map[string]string) ReplicationState {
+	d := ReplicationState{}
+	for k, v := range m {
+		switch {
+		case equals(k, ReservedMetadataPrefixLower+ReplicationTimestamp):
+			tm, _ := time.Parse(http.TimeFormat, v)
+			d.ReplicationTimeStamp = tm
+		case equals(k, ReservedMetadataPrefixLower+ReplicaTimestamp):
+			tm, _ := time.Parse(http.TimeFormat, v)
+			d.ReplicaTimeStamp = tm
+		case equals(k, ReservedMetadataPrefixLower+ReplicaStatus):
+			d.ReplicaStatus = replication.StatusType(v)
+		case equals(k, ReservedMetadataPrefixLower+ReplicationStatus):
+			d.ReplicationStatusInternal = v
+			d.Targets = replicationStatusesMap(v)
+		case equals(k, VersionPurgeStatusKey):
+			d.VersionPurgeStatusInternal = v
+			d.PurgeTargets = versionPurgeStatusesMap(v)
+		case strings.HasPrefix(k, ReservedMetadataPrefixLower+ReplicationReset):
+			arn := strings.TrimPrefix(k, fmt.Sprintf("%s-", ReservedMetadataPrefixLower+ReplicationReset))
+			if d.ResetStatusesMap == nil {
+				d.ResetStatusesMap = make(map[string]string, 1)
+			}
+			d.ResetStatusesMap[arn] = v
+		}
+	}
+	return d
 }

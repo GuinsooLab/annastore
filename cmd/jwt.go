@@ -18,15 +18,18 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
 
-	jwtgo "github.com/dgrijalva/jwt-go"
-	jwtreq "github.com/dgrijalva/jwt-go/request"
-	xjwt "github.com/minio/minio/cmd/jwt"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/auth"
+	jwtgo "github.com/golang-jwt/jwt/v4"
+	jwtreq "github.com/golang-jwt/jwt/v4/request"
+	lru "github.com/hashicorp/golang-lru"
+	"github.com/minio/minio/internal/auth"
+	xjwt "github.com/minio/minio/internal/jwt"
+	"github.com/minio/minio/internal/logger"
+	iampolicy "github.com/minio/pkg/iam/policy"
 )
 
 const (
@@ -43,12 +46,9 @@ const (
 )
 
 var (
-	errInvalidAccessKeyID   = errors.New("The access key ID you provided does not exist in our records")
-	errChangeCredNotAllowed = errors.New("Changing access key and secret key not allowed")
-	errAuthentication       = errors.New("Authentication failed, check your access credentials")
-	errNoAuthToken          = errors.New("JWT token missing")
-	errIncorrectCreds       = errors.New("Current access key or secret key is incorrect")
-	errPresignedNotAllowed  = errors.New("Unable to generate shareable URL due to lack of read permissions")
+	errInvalidAccessKeyID = errors.New("The access key ID you provided does not exist in our records")
+	errAuthentication     = errors.New("Authentication failed, check your access credentials")
+	errNoAuthToken        = errors.New("JWT token missing")
 )
 
 func authenticateJWTUsers(accessKey, secretKey string, expiry time.Duration) (string, error) {
@@ -63,11 +63,11 @@ func authenticateJWTUsers(accessKey, secretKey string, expiry time.Duration) (st
 func authenticateJWTUsersWithCredentials(credentials auth.Credentials, expiresAt time.Time) (string, error) {
 	serverCred := globalActiveCred
 	if serverCred.AccessKey != credentials.AccessKey {
-		var ok bool
-		serverCred, ok = globalIAMSys.GetUser(credentials.AccessKey)
+		u, ok := globalIAMSys.GetUser(context.TODO(), credentials.AccessKey)
 		if !ok {
 			return "", errInvalidAccessKeyID
 		}
+		serverCred = u.Credentials
 	}
 
 	if !serverCred.Equal(credentials) {
@@ -80,6 +80,35 @@ func authenticateJWTUsersWithCredentials(credentials auth.Credentials, expiresAt
 
 	jwt := jwtgo.NewWithClaims(jwtgo.SigningMethodHS512, claims)
 	return jwt.SignedString([]byte(serverCred.SecretKey))
+}
+
+// cachedAuthenticateNode will cache authenticateNode results for given values up to ttl.
+func cachedAuthenticateNode(ttl time.Duration) func(accessKey, secretKey, audience string) (string, error) {
+	type key struct {
+		accessKey, secretKey, audience string
+	}
+	type value struct {
+		created time.Time
+		res     string
+		err     error
+	}
+	cache, err := lru.NewARC(100)
+	if err != nil {
+		logger.LogIf(GlobalContext, err)
+		return authenticateNode
+	}
+	return func(accessKey, secretKey, audience string) (string, error) {
+		k := key{accessKey: accessKey, secretKey: secretKey, audience: audience}
+		v, ok := cache.Get(k)
+		if ok {
+			if val, ok := v.(*value); ok && time.Since(val.created) < ttl {
+				return val.res, val.err
+			}
+		}
+		s, err := authenticateNode(accessKey, secretKey, audience)
+		cache.Add(k, &value{created: time.Now(), res: s, err: err})
+		return s, err
+	}
 }
 
 func authenticateNode(accessKey, secretKey, audience string) (string, error) {
@@ -100,68 +129,71 @@ func authenticateURL(accessKey, secretKey string) (string, error) {
 	return authenticateJWTUsers(accessKey, secretKey, defaultURLJWTExpiry)
 }
 
-// Callback function used for parsing
-func webTokenCallback(claims *xjwt.MapClaims) ([]byte, error) {
-	if claims.AccessKey == globalActiveCred.AccessKey {
-		return []byte(globalActiveCred.SecretKey), nil
-	}
-	ok, _, err := globalIAMSys.IsTempUser(claims.AccessKey)
-	if err != nil {
-		if err == errNoSuchUser {
-			return nil, errInvalidAccessKeyID
-		}
-		return nil, err
-	}
-	if ok {
-		return []byte(globalActiveCred.SecretKey), nil
-	}
-	cred, ok := globalIAMSys.GetUser(claims.AccessKey)
-	if !ok {
-		return nil, errInvalidAccessKeyID
-	}
-	return []byte(cred.SecretKey), nil
-
-}
-
-func isAuthTokenValid(token string) bool {
-	_, _, err := webTokenAuthenticate(token)
-	return err == nil
-}
-
-func webTokenAuthenticate(token string) (*xjwt.MapClaims, bool, error) {
-	if token == "" {
-		return nil, false, errNoAuthToken
-	}
-	claims := xjwt.NewMapClaims()
-	if err := xjwt.ParseWithClaims(token, claims, webTokenCallback); err != nil {
-		return claims, false, errAuthentication
-	}
-	owner := claims.AccessKey == globalActiveCred.AccessKey
-	return claims, owner, nil
-}
-
 // Check if the request is authenticated.
 // Returns nil if the request is authenticated. errNoAuthToken if token missing.
 // Returns errAuthentication for all other errors.
-func webRequestAuthenticate(req *http.Request) (*xjwt.MapClaims, bool, error) {
+func metricsRequestAuthenticate(req *http.Request) (*xjwt.MapClaims, []string, bool, error) {
 	token, err := jwtreq.AuthorizationHeaderExtractor.ExtractToken(req)
 	if err != nil {
 		if err == jwtreq.ErrNoTokenInRequest {
-			return nil, false, errNoAuthToken
+			return nil, nil, false, errNoAuthToken
 		}
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	claims := xjwt.NewMapClaims()
-	if err := xjwt.ParseWithClaims(token, claims, webTokenCallback); err != nil {
-		return claims, false, errAuthentication
+	if err := xjwt.ParseWithClaims(token, claims, func(claims *xjwt.MapClaims) ([]byte, error) {
+		if claims.AccessKey == globalActiveCred.AccessKey {
+			return []byte(globalActiveCred.SecretKey), nil
+		}
+		u, ok := globalIAMSys.GetUser(req.Context(), claims.AccessKey)
+		if !ok {
+			return nil, errInvalidAccessKeyID
+		}
+		cred := u.Credentials
+		return []byte(cred.SecretKey), nil
+	}); err != nil {
+		return claims, nil, false, errAuthentication
 	}
-	owner := claims.AccessKey == globalActiveCred.AccessKey
-	return claims, owner, nil
+	owner := true
+	var groups []string
+	if globalActiveCred.AccessKey != claims.AccessKey {
+		// Check if the access key is part of users credentials.
+		u, ok := globalIAMSys.GetUser(req.Context(), claims.AccessKey)
+		if !ok {
+			return nil, nil, false, errInvalidAccessKeyID
+		}
+		ucred := u.Credentials
+		// get embedded claims
+		eclaims, s3Err := checkClaimsFromToken(req, ucred)
+		if s3Err != ErrNone {
+			return nil, nil, false, errAuthentication
+		}
+
+		for k, v := range eclaims {
+			claims.MapClaims[k] = v
+		}
+
+		// Now check if we have a sessionPolicy.
+		if _, ok = eclaims[iampolicy.SessionPolicyName]; ok {
+			owner = false
+		} else {
+			owner = globalActiveCred.AccessKey == ucred.ParentUser
+		}
+
+		groups = ucred.Groups
+	}
+
+	return claims, groups, owner, nil
 }
 
-func newAuthToken(audience string) string {
-	cred := globalActiveCred
-	token, err := authenticateNode(cred.AccessKey, cred.SecretKey, audience)
-	logger.CriticalIf(GlobalContext, err)
-	return token
+// newCachedAuthToken returns a token that is cached up to 15 seconds.
+// If globalActiveCred is updated it is reflected at once.
+func newCachedAuthToken() func(audience string) string {
+	fn := cachedAuthenticateNode(15 * time.Second)
+	return func(audience string) string {
+		cred := globalActiveCred
+		token, err := fn(cred.AccessKey, cred.SecretKey, audience)
+		logger.CriticalIf(GlobalContext, err)
+		return token
+	}
 }

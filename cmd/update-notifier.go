@@ -26,7 +26,7 @@ import (
 
 	"github.com/cheggaaa/pb"
 	humanize "github.com/dustin/go-humanize"
-	"github.com/minio/minio/pkg/color"
+	"github.com/minio/minio/internal/color"
 )
 
 // prepareUpdateMessage - prepares the update message, only if a
@@ -40,6 +40,10 @@ func prepareUpdateMessage(downloadURL string, older time.Duration) string {
 	// difference between newer and current release.
 	t := time.Time{}
 	newerThan := humanize.RelTime(t, t.Add(older), "ago", "")
+
+	if globalCLIContext.JSON {
+		return fmt.Sprintf("You are running an older version of MinIO released %s, update: %s", newerThan, downloadURL)
+	}
 
 	// Return the nicely colored and formatted update message.
 	return colorizeUpdateMessage(downloadURL, newerThan)

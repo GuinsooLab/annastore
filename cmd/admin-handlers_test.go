@@ -28,10 +28,11 @@ import (
 	"net/url"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/pkg/auth"
+	"github.com/minio/minio/internal/auth"
 )
 
 // adminErasureTestBed - encapsulates subsystems that need to be setup for
@@ -40,11 +41,13 @@ type adminErasureTestBed struct {
 	erasureDirs []string
 	objLayer    ObjectLayer
 	router      *mux.Router
+	done        context.CancelFunc
 }
 
 // prepareAdminErasureTestBed - helper function that setups a single-node
 // Erasure backend for admin-handler tests.
 func prepareAdminErasureTestBed(ctx context.Context) (*adminErasureTestBed, error) {
+	ctx, cancel := context.WithCancel(ctx)
 
 	// reset global variables to start afresh.
 	resetTestGlobals()
@@ -56,11 +59,13 @@ func prepareAdminErasureTestBed(ctx context.Context) (*adminErasureTestBed, erro
 	// Initializing objectLayer for HealFormatHandler.
 	objLayer, erasureDirs, xlErr := initTestErasureObjLayer(ctx)
 	if xlErr != nil {
+		cancel()
 		return nil, xlErr
 	}
 
 	// Initialize minio server config.
 	if err := newTestConfig(globalMinioDefaultRegion, objLayer); err != nil {
+		cancel()
 		return nil, err
 	}
 
@@ -69,26 +74,28 @@ func prepareAdminErasureTestBed(ctx context.Context) (*adminErasureTestBed, erro
 
 	globalEndpoints = mustGetPoolEndpoints(erasureDirs...)
 
-	newAllSubsystems()
+	initAllSubsystems()
 
-	initAllSubsystems(ctx, objLayer)
+	initConfigSubsystem(ctx, objLayer)
 
-	globalIAMSys.InitStore(objLayer)
+	globalIAMSys.Init(ctx, objLayer, globalEtcdClient, 2*time.Second)
 
 	// Setup admin mgmt REST API handlers.
 	adminRouter := mux.NewRouter()
-	registerAdminRouter(adminRouter, true, true)
+	registerAdminRouter(adminRouter, true)
 
 	return &adminErasureTestBed{
 		erasureDirs: erasureDirs,
 		objLayer:    objLayer,
 		router:      adminRouter,
+		done:        cancel,
 	}, nil
 }
 
 // TearDown - method that resets the test bed for subsequent unit
 // tests to start afresh.
 func (atb *adminErasureTestBed) TearDown() {
+	atb.done()
 	removeRoots(atb.erasureDirs)
 	resetTestGlobals()
 }
@@ -182,7 +189,7 @@ func testServicesCmdHandler(cmd cmdType, t *testing.T) {
 
 	adminTestBed, err := prepareAdminErasureTestBed(ctx)
 	if err != nil {
-		t.Fatal("Failed to initialize a single node Erasure backend for admin handler tests.")
+		t.Fatal("Failed to initialize a single node Erasure backend for admin handler tests.", err)
 	}
 	defer adminTestBed.TearDown()
 
@@ -229,8 +236,8 @@ func TestServiceRestartHandler(t *testing.T) {
 
 // buildAdminRequest - helper function to build an admin API request.
 func buildAdminRequest(queryVal url.Values, method, path string,
-	contentLength int64, bodySeeker io.ReadSeeker) (*http.Request, error) {
-
+	contentLength int64, bodySeeker io.ReadSeeker) (*http.Request, error,
+) {
 	req, err := newTestRequest(method,
 		adminPathPrefix+adminAPIVersionPrefix+path+"?"+queryVal.Encode(),
 		contentLength, bodySeeker)
@@ -253,7 +260,7 @@ func TestAdminServerInfo(t *testing.T) {
 
 	adminTestBed, err := prepareAdminErasureTestBed(ctx)
 	if err != nil {
-		t.Fatal("Failed to initialize a single node Erasure backend for admin handler tests.")
+		t.Fatal("Failed to initialize a single node Erasure backend for admin handler tests.", err)
 	}
 
 	defer adminTestBed.TearDown()
@@ -373,5 +380,4 @@ func TestExtractHealInitParams(t *testing.T) {
 			}
 		}
 	}
-
 }

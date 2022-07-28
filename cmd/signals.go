@@ -24,7 +24,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/internal/logger"
 )
 
 func handleSignals() {
@@ -64,6 +64,10 @@ func handleSignals() {
 		if objAPI := newObjectLayerFn(); objAPI != nil {
 			oerr = objAPI.Shutdown(context.Background())
 			logger.LogIf(context.Background(), oerr)
+		}
+
+		if srv := newConsoleServerFn(); srv != nil {
+			logger.LogIf(context.Background(), srv.Shutdown())
 		}
 
 		return (err == nil && oerr == nil)

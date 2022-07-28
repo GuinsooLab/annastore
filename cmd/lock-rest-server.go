@@ -18,16 +18,15 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"errors"
+	"io"
 	"net/http"
-	"sort"
-	"strconv"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/gorilla/mux"
-	"github.com/minio/minio/pkg/dsync"
+	"github.com/minio/minio/internal/dsync"
 )
 
 const (
@@ -35,7 +34,7 @@ const (
 	lockMaintenanceInterval = 1 * time.Minute
 
 	// Lock validity duration
-	lockValidityDuration = 20 * time.Second
+	lockValidityDuration = 1 * time.Minute
 )
 
 // To abstract a node over network.
@@ -63,31 +62,10 @@ func (l *lockRESTServer) IsValid(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func getLockArgs(r *http.Request) (args dsync.LockArgs, err error) {
-	quorum, err := strconv.Atoi(r.URL.Query().Get(lockRESTQuorum))
-	if err != nil {
-		return args, err
-	}
-
-	args = dsync.LockArgs{
-		Owner:  r.URL.Query().Get(lockRESTOwner),
-		UID:    r.URL.Query().Get(lockRESTUID),
-		Source: r.URL.Query().Get(lockRESTSource),
-		Quorum: quorum,
-	}
-
-	var resources []string
-	bio := bufio.NewScanner(r.Body)
-	for bio.Scan() {
-		resources = append(resources, bio.Text())
-	}
-
-	if err := bio.Err(); err != nil {
-		return args, err
-	}
-
-	sort.Strings(resources)
-	args.Resources = resources
-	return args, nil
+	dec := msgpNewReader(io.LimitReader(r.Body, 1000*humanize.KiByte))
+	defer readMsgpReaderPool.Put(dec)
+	err = args.DecodeMsg(dec)
+	return args, err
 }
 
 // HealthHandler returns success if request is authenticated.
@@ -231,22 +209,7 @@ func (l *lockRESTServer) ForceUnlockHandler(w http.ResponseWriter, r *http.Reque
 // lockMaintenance loops over all locks and discards locks
 // that have not been refreshed for some time.
 func lockMaintenance(ctx context.Context) {
-	// Wait until the object API is ready
-	// no need to start the lock maintenance
-	// if ObjectAPI is not initialized.
-
-	var objAPI ObjectLayer
-
-	for {
-		objAPI = newObjectLayerFn()
-		if objAPI == nil {
-			time.Sleep(time.Second)
-			continue
-		}
-		break
-	}
-
-	if _, ok := objAPI.(*erasureServerPools); !ok {
+	if !globalIsDistErasure {
 		return
 	}
 
@@ -261,10 +224,10 @@ func lockMaintenance(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-lkTimer.C:
+			globalLockServer.expireOldLocks(lockValidityDuration)
+
 			// Reset the timer for next cycle.
 			lkTimer.Reset(lockMaintenanceInterval)
-
-			globalLockServer.expireOldLocks(lockValidityDuration)
 		}
 	}
 }

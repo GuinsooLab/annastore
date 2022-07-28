@@ -26,11 +26,17 @@ import (
 	"github.com/minio/madmin-go"
 	"github.com/minio/minio-go/v7/pkg/encrypt"
 	"github.com/minio/minio-go/v7/pkg/tags"
-	"github.com/minio/minio/pkg/bucket/policy"
+	"github.com/minio/pkg/bucket/policy"
+
+	"github.com/minio/minio/internal/bucket/replication"
+	xioutil "github.com/minio/minio/internal/ioutil"
 )
 
 // CheckPreconditionFn returns true if precondition check failed.
 type CheckPreconditionFn func(o ObjectInfo) bool
+
+// EvalMetadataFn validates input objInfo and returns an updated metadata
+type EvalMetadataFn func(o ObjectInfo) error
 
 // GetObjectInfoFn is the signature of GetObjectInfo function.
 type GetObjectInfoFn func(ctx context.Context, bucket, object string, opts ObjectOptions) (ObjectInfo, error)
@@ -40,26 +46,50 @@ type ObjectOptions struct {
 	ServerSideEncryption encrypt.ServerSide
 	VersionSuspended     bool      // indicates if the bucket was previously versioned but is currently suspended.
 	Versioned            bool      // indicates if the bucket is versioned
-	WalkVersions         bool      // indicates if the we are interested in walking versions
 	VersionID            string    // Specifies the versionID which needs to be overwritten or read
 	MTime                time.Time // Is only set in POST/PUT operations
 	Expires              time.Time // Is only used in POST/PUT operations
 
-	DeleteMarker                  bool                   // Is only set in DELETE operations for delete marker replication
-	UserDefined                   map[string]string      // only set in case of POST/PUT operations
-	PartNumber                    int                    // only useful in case of GetObject/HeadObject
-	CheckPrecondFn                CheckPreconditionFn    // only set during GetObject/HeadObject/CopyObjectPart preconditional valuation
-	DeleteMarkerReplicationStatus string                 // Is only set in DELETE operations
-	VersionPurgeStatus            VersionPurgeStatusType // Is only set in DELETE operations for delete marker version to be permanently deleted.
-	Transition                    TransitionOptions
+	DeleteMarker      bool                // Is only set in DELETE operations for delete marker replication
+	UserDefined       map[string]string   // only set in case of POST/PUT operations
+	PartNumber        int                 // only useful in case of GetObject/HeadObject
+	CheckPrecondFn    CheckPreconditionFn // only set during GetObject/HeadObject/CopyObjectPart preconditional valuation
+	EvalMetadataFn    EvalMetadataFn      // only set for retention settings, meant to be used only when updating metadata in-place.
+	DeleteReplication ReplicationState    // Represents internal replication state needed for Delete replication
+	Transition        TransitionOptions
+	Expiration        ExpirationOptions
 
-	NoLock         bool                                                  // indicates to lower layers if the caller is expecting to hold locks.
-	ProxyRequest   bool                                                  // only set for GET/HEAD in active-active replication scenario
-	ProxyHeaderSet bool                                                  // only set for GET/HEAD in active-active replication scenario
-	ParentIsObject func(ctx context.Context, bucket, parent string) bool // Used to verify if parent is an object.
+	NoDecryption                        bool      // indicates if the stream must be decrypted.
+	PreserveETag                        string    // preserves this etag during a PUT call.
+	NoLock                              bool      // indicates to lower layers if the caller is expecting to hold locks.
+	ProxyRequest                        bool      // only set for GET/HEAD in active-active replication scenario
+	ProxyHeaderSet                      bool      // only set for GET/HEAD in active-active replication scenario
+	ReplicationRequest                  bool      // true only if replication request
+	ReplicationSourceTaggingTimestamp   time.Time // set if MinIOSourceTaggingTimestamp received
+	ReplicationSourceLegalholdTimestamp time.Time // set if MinIOSourceObjectLegalholdTimestamp received
+	ReplicationSourceRetentionTimestamp time.Time // set if MinIOSourceObjectRetentionTimestamp received
+	DeletePrefix                        bool      // set true to enforce a prefix deletion, only application for DeleteObject API,
+
+	Speedtest bool // object call specifically meant for SpeedTest code, set to 'true' when invoked by SpeedtestHandler.
 
 	// Use the maximum parity (N/2), used when saving server configuration files
 	MaxParity bool
+
+	// SkipDecommissioned set to 'true' if the call requires skipping the pool being decommissioned.
+	// mainly set for certain WRITE operations.
+	SkipDecommissioned bool
+
+	WalkAscending   bool                     // return Walk results in ascending order of versions
+	PrefixEnabledFn func(prefix string) bool // function which returns true if versioning is enabled on prefix
+
+	// IndexCB will return any index created but the compression.
+	// Object must have been read at this point.
+	IndexCB func() []byte
+}
+
+// ExpirationOptions represents object options for object expiration at objectLayer.
+type ExpirationOptions struct {
+	Expire bool
 }
 
 // TransitionOptions represents object options for transition ObjectLayer operation
@@ -72,11 +102,67 @@ type TransitionOptions struct {
 	ExpireRestored bool
 }
 
-// BucketOptions represents bucket options for ObjectLayer bucket operations
-type BucketOptions struct {
+// MakeBucketOptions represents bucket options for ObjectLayer bucket operations
+type MakeBucketOptions struct {
 	Location          string
 	LockEnabled       bool
 	VersioningEnabled bool
+	ForceCreate       bool      // Create buckets even if they are already created.
+	CreatedAt         time.Time // only for site replication
+}
+
+// DeleteBucketOptions provides options for DeleteBucket calls.
+type DeleteBucketOptions struct {
+	Force      bool             // Force deletion
+	NoRecreate bool             // Do not recreate on delete failures
+	SRDeleteOp SRBucketDeleteOp // only when site replication is enabled
+}
+
+// BucketOptions provides options for ListBuckets and GetBucketInfo call.
+type BucketOptions struct {
+	Deleted bool // true only when site replication is enabled
+}
+
+// SetReplicaStatus sets replica status and timestamp for delete operations in ObjectOptions
+func (o *ObjectOptions) SetReplicaStatus(st replication.StatusType) {
+	o.DeleteReplication.ReplicaStatus = st
+	o.DeleteReplication.ReplicaTimeStamp = UTCNow()
+}
+
+// DeleteMarkerReplicationStatus - returns replication status of delete marker from DeleteReplication state in ObjectOptions
+func (o *ObjectOptions) DeleteMarkerReplicationStatus() replication.StatusType {
+	return o.DeleteReplication.CompositeReplicationStatus()
+}
+
+// VersionPurgeStatus - returns version purge status from DeleteReplication state in ObjectOptions
+func (o *ObjectOptions) VersionPurgeStatus() VersionPurgeStatusType {
+	return o.DeleteReplication.CompositeVersionPurgeStatus()
+}
+
+// SetDeleteReplicationState sets the delete replication options.
+func (o *ObjectOptions) SetDeleteReplicationState(dsc ReplicateDecision, vID string) {
+	o.DeleteReplication = ReplicationState{
+		ReplicateDecisionStr: dsc.String(),
+	}
+	switch {
+	case o.VersionID == "":
+		o.DeleteReplication.ReplicationStatusInternal = dsc.PendingStatus()
+		o.DeleteReplication.Targets = replicationStatusesMap(o.DeleteReplication.ReplicationStatusInternal)
+	default:
+		o.DeleteReplication.VersionPurgeStatusInternal = dsc.PendingStatus()
+		o.DeleteReplication.PurgeTargets = versionPurgeStatusesMap(o.DeleteReplication.VersionPurgeStatusInternal)
+	}
+}
+
+// PutReplicationState gets ReplicationState for PUT operation from ObjectOptions
+func (o *ObjectOptions) PutReplicationState() (r ReplicationState) {
+	rstatus, ok := o.UserDefined[ReservedMetadataPrefixLower+ReplicationStatus]
+	if !ok {
+		return
+	}
+	r.ReplicationStatusInternal = rstatus
+	r.Targets = replicationStatusesMap(rstatus)
+	return
 }
 
 // LockType represents required locking for ObjectLayer operations
@@ -102,17 +188,16 @@ type ObjectLayer interface {
 
 	// Storage operations.
 	Shutdown(context.Context) error
-	NSScanner(ctx context.Context, bf *bloomFilter, updates chan<- madmin.DataUsageInfo) error
-
+	NSScanner(ctx context.Context, bf *bloomFilter, updates chan<- DataUsageInfo, wantCycle uint32, scanMode madmin.HealScanMode) error
 	BackendInfo() madmin.BackendInfo
 	StorageInfo(ctx context.Context) (StorageInfo, []error)
 	LocalStorageInfo(ctx context.Context) (StorageInfo, []error)
 
 	// Bucket operations.
-	MakeBucketWithLocation(ctx context.Context, bucket string, opts BucketOptions) error
-	GetBucketInfo(ctx context.Context, bucket string) (bucketInfo BucketInfo, err error)
-	ListBuckets(ctx context.Context) (buckets []BucketInfo, err error)
-	DeleteBucket(ctx context.Context, bucket string, forceDelete bool) error
+	MakeBucketWithLocation(ctx context.Context, bucket string, opts MakeBucketOptions) error
+	GetBucketInfo(ctx context.Context, bucket string, opts BucketOptions) (bucketInfo BucketInfo, err error)
+	ListBuckets(ctx context.Context, opts BucketOptions) (buckets []BucketInfo, err error)
+	DeleteBucket(ctx context.Context, bucket string, opts DeleteBucketOptions) error
 	ListObjects(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result ListObjectsInfo, err error)
 	ListObjectsV2(ctx context.Context, bucket, prefix, continuationToken, delimiter string, maxKeys int, fetchOwner bool, startAfter string) (result ListObjectsV2Info, err error)
 	ListObjectVersions(ctx context.Context, bucket, prefix, marker, versionMarker, delimiter string, maxKeys int) (result ListObjectVersionsInfo, err error)
@@ -158,7 +243,6 @@ type ObjectLayer interface {
 	IsEncryptionSupported() bool
 	IsTaggingSupported() bool
 	IsCompressionSupported() bool
-
 	SetDriveCounts() []int // list of erasure stripe size for each pool in order.
 
 	// Healing operations.
@@ -199,6 +283,6 @@ func GetObject(ctx context.Context, api ObjectLayer, bucket, object string, star
 	}
 	defer reader.Close()
 
-	_, err = io.Copy(writer, reader)
+	_, err = xioutil.Copy(writer, reader)
 	return err
 }

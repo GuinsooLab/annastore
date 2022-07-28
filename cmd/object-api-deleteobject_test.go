@@ -32,7 +32,6 @@ func TestDeleteObject(t *testing.T) {
 
 // Unit test for DeleteObject in general.
 func testDeleteObject(obj ObjectLayer, instanceType string, t TestErrHandler) {
-
 	type objectUpload struct {
 		name    string
 		content string
@@ -85,7 +84,7 @@ func testDeleteObject(obj ObjectLayer, instanceType string, t TestErrHandler) {
 	}
 
 	for i, testCase := range testCases {
-		err := obj.MakeBucketWithLocation(context.Background(), testCase.bucketName, BucketOptions{})
+		err := obj.MakeBucketWithLocation(context.Background(), testCase.bucketName, MakeBucketOptions{})
 		if err != nil {
 			t.Fatalf("%s : %s", instanceType, err.Error())
 		}

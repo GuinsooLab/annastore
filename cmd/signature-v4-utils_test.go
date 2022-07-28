@@ -18,11 +18,78 @@
 package cmd
 
 import (
+	"context"
 	"net/http"
+	"os"
 	"testing"
+	"time"
 
-	xhttp "github.com/minio/minio/cmd/http"
+	"github.com/minio/madmin-go"
+	"github.com/minio/minio/internal/auth"
+	xhttp "github.com/minio/minio/internal/http"
 )
+
+func TestCheckValid(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	objLayer, fsDir, err := prepareFS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(fsDir)
+	if err = newTestConfig(globalMinioDefaultRegion, objLayer); err != nil {
+		t.Fatalf("unable initialize config file, %s", err)
+	}
+
+	initAllSubsystems()
+
+	initConfigSubsystem(ctx, objLayer)
+
+	globalIAMSys.Init(ctx, objLayer, globalEtcdClient, 2*time.Second)
+
+	req, err := newTestRequest(http.MethodGet, "http://example.com:9000/bucket/object", 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = signRequestV4(req, globalActiveCred.AccessKey, globalActiveCred.SecretKey); err != nil {
+		t.Fatal(err)
+	}
+
+	_, owner, s3Err := checkKeyValid(req, globalActiveCred.AccessKey)
+	if s3Err != ErrNone {
+		t.Fatalf("Unexpected failure with %v", errorCodes.ToAPIErr(s3Err))
+	}
+
+	if !owner {
+		t.Fatalf("Expected owner to be 'true', found %t", owner)
+	}
+
+	_, _, s3Err = checkKeyValid(req, "does-not-exist")
+	if s3Err != ErrInvalidAccessKeyID {
+		t.Fatalf("Expected error 'ErrInvalidAccessKeyID', found %v", s3Err)
+	}
+
+	ucreds, err := auth.CreateCredentials("myuser1", "mypassword1")
+	if err != nil {
+		t.Fatalf("unable create credential, %s", err)
+	}
+
+	globalIAMSys.CreateUser(ctx, ucreds.AccessKey, madmin.AddOrUpdateUserReq{
+		SecretKey: ucreds.SecretKey,
+		Status:    madmin.AccountEnabled,
+	})
+
+	_, owner, s3Err = checkKeyValid(req, ucreds.AccessKey)
+	if s3Err != ErrNone {
+		t.Fatalf("Unexpected failure with %v", errorCodes.ToAPIErr(s3Err))
+	}
+
+	if owner {
+		t.Fatalf("Expected owner to be 'false', found %t", owner)
+	}
+}
 
 // TestSkipContentSha256Cksum - Test validate the logic which decides whether
 // to skip checksum validation based on the request header.
@@ -89,6 +156,7 @@ func TestSkipContentSha256Cksum(t *testing.T) {
 				inputReq.Header.Set(testCase.inputHeaderKey, testCase.inputHeaderValue)
 			}
 		}
+		inputReq.ParseForm()
 
 		actualResult := skipContentSha256Cksum(inputReq)
 		if testCase.expectedResult != actualResult {
@@ -105,7 +173,6 @@ func TestIsValidRegion(t *testing.T) {
 
 		expectedResult bool
 	}{
-
 		{"", "", true},
 		{globalMinioDefaultRegion, "", true},
 		{globalMinioDefaultRegion, "US", true},
@@ -163,6 +230,7 @@ func TestExtractSignedHeaders(t *testing.T) {
 	// set headers value through Get parameter
 	inputQuery.Add("x-amz-server-side-encryption", xhttp.AmzEncryptionAES)
 	r.URL.RawQuery = inputQuery.Encode()
+	r.ParseForm()
 	_, errCode = extractSignedHeaders(signedHeaders, r)
 	if errCode != ErrNone {
 		t.Fatalf("Expected the APIErrorCode to be %d, but got %d", ErrNone, errCode)
@@ -267,6 +335,7 @@ func TestGetContentSha256Cksum(t *testing.T) {
 		if testCase.h != "" {
 			r.Header.Set("x-amz-content-sha256", testCase.h)
 		}
+		r.ParseForm()
 		got := getContentSha256Cksum(r, serviceS3)
 		if got != testCase.expected {
 			t.Errorf("Test %d: got:%s expected:%s", i+1, got, testCase.expected)

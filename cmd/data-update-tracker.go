@@ -32,10 +32,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/color"
-	"github.com/minio/minio/pkg/console"
-	"github.com/willf/bloom"
+	"github.com/bits-and-blooms/bloom/v3"
+	"github.com/minio/minio/internal/color"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/pkg/console"
 )
 
 const (
@@ -46,7 +46,7 @@ const (
 	dataUpdateTrackerQueueSize = 0
 
 	dataUpdateTrackerFilename     = dataUsageBucket + SlashSeparator + ".tracker.bin"
-	dataUpdateTrackerVersion      = 5
+	dataUpdateTrackerVersion      = 7
 	dataUpdateTrackerSaveInterval = 5 * time.Minute
 )
 
@@ -176,9 +176,6 @@ func (d *dataUpdateTracker) latestWithDir(dir string) uint64 {
 		return d.current()
 	}
 	if isReservedOrInvalidBucket(bucket, false) {
-		if d.debug {
-			console.Debugf(dateUpdateTrackerLogPrefix+" isReservedOrInvalidBucket: %v, entry: %v\n", bucket, dir)
-		}
 		return d.current()
 	}
 
@@ -206,15 +203,15 @@ func (d *dataUpdateTracker) latestWithDir(dir string) uint64 {
 // start a saver goroutine.
 // All of these will exit when the context is canceled.
 func (d *dataUpdateTracker) start(ctx context.Context, drives ...string) {
-	if len(drives) <= 0 {
-		logger.LogIf(ctx, errors.New("dataUpdateTracker.start: No drives specified"))
+	if len(drives) == 0 {
+		logger.LogIf(ctx, errors.New("dataUpdateTracker.start: No local drives specified"))
 		return
 	}
 	d.load(ctx, drives...)
 	go d.startCollector(ctx)
 	// startSaver will unlock.
 	d.mu.Lock()
-	go d.startSaver(ctx, dataUpdateTrackerSaveInterval, drives)
+	go d.startSaver(ctx, dataUpdateTrackerSaveInterval, drives...)
 }
 
 // load will attempt to load data tracking information from the supplied drives.
@@ -223,8 +220,8 @@ func (d *dataUpdateTracker) start(ctx context.Context, drives ...string) {
 // If no valid data usage tracker can be found d will remain unchanged.
 // If object is shared the caller should lock it.
 func (d *dataUpdateTracker) load(ctx context.Context, drives ...string) {
-	if len(drives) <= 0 {
-		logger.LogIf(ctx, errors.New("dataUpdateTracker.load: No drives specified"))
+	if len(drives) == 0 {
+		logger.LogIf(ctx, errors.New("dataUpdateTracker.load: No local drives specified"))
 		return
 	}
 	for _, drive := range drives {
@@ -249,7 +246,11 @@ func (d *dataUpdateTracker) load(ctx context.Context, drives ...string) {
 // startSaver will start a saver that will write d to all supplied drives at specific intervals.
 // 'd' must be write locked when started and will be unlocked.
 // The saver will save and exit when supplied context is closed.
-func (d *dataUpdateTracker) startSaver(ctx context.Context, interval time.Duration, drives []string) {
+func (d *dataUpdateTracker) startSaver(ctx context.Context, interval time.Duration, drives ...string) {
+	if len(drives) == 0 {
+		return
+	}
+
 	saveNow := d.save
 	exited := make(chan struct{})
 	d.saveExited = exited
@@ -400,7 +401,7 @@ func (d *dataUpdateTracker) deserialize(src io.Reader, newerThan time.Time) erro
 		return err
 	}
 	switch tmp[0] {
-	case 1, 2, 3, 4:
+	case 1, 2, 3, 4, 5, 6:
 		if intDataUpdateTracker.debug {
 			console.Debugln(color.Green("dataUpdateTracker: ") + "deprecated data version, updating.")
 		}
@@ -476,30 +477,32 @@ func (d *dataUpdateTracker) deserialize(src io.Reader, newerThan time.Time) erro
 // start a collector that picks up entries from objectUpdatedCh
 // and adds them  to the current bloom filter.
 func (d *dataUpdateTracker) startCollector(ctx context.Context) {
-	for in := range d.input {
-		bucket, _ := path2BucketObjectWithBasePath("", in)
-		if bucket == "" {
-			if d.debug && len(in) > 0 {
-				console.Debugf(color.Green("dataUpdateTracker:")+" no bucket (%s)\n", in)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case in := <-d.input:
+			bucket, _ := path2BucketObjectWithBasePath("", in)
+			if bucket == "" {
+				if d.debug && len(in) > 0 {
+					console.Debugf(color.Green("dataUpdateTracker:")+" no bucket (%s)\n", in)
+				}
+				continue
 			}
-			continue
-		}
 
-		if isReservedOrInvalidBucket(bucket, false) {
-			if d.debug {
-				console.Debugf(color.Green("dataUpdateTracker:")+" isReservedOrInvalidBucket: %v, entry: %v\n", bucket, in)
+			if isReservedOrInvalidBucket(bucket, false) {
+				continue
 			}
-			continue
-		}
-		split := splitPathDeterministic(in)
+			split := splitPathDeterministic(in)
 
-		// Add all paths until done.
-		d.mu.Lock()
-		for i := range split {
-			d.Current.bf.AddString(hashPath(path.Join(split[:i+1]...)).String())
+			// Add all paths until done.
+			d.mu.Lock()
+			for i := range split {
+				d.Current.bf.AddString(hashPath(path.Join(split[:i+1]...)).String())
+			}
+			d.dirty = d.dirty || len(split) > 0
+			d.mu.Unlock()
 		}
-		d.dirty = d.dirty || len(split) > 0
-		d.mu.Unlock()
 	}
 }
 
@@ -512,7 +515,6 @@ func (d *dataUpdateTracker) markDirty(bucket, prefix string) {
 	}
 
 	if isReservedOrInvalidBucket(bucket, false) && d.debug {
-		console.Debugf(dateUpdateTrackerLogPrefix+" isReservedOrInvalidBucket: %v, entry: %v\n", bucket, prefix)
 		return
 	}
 	split := splitPathDeterministic(pathJoin(bucket, prefix))

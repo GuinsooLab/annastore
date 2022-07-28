@@ -29,10 +29,10 @@ import (
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/lock"
-	"github.com/minio/minio/pkg/mimedb"
+	xhttp "github.com/minio/minio/internal/http"
+	"github.com/minio/minio/internal/lock"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/pkg/mimedb"
 )
 
 // FS format, and object metadata.
@@ -91,7 +91,7 @@ func (c *FSChecksumInfoV1) UnmarshalJSON(data []byte) error {
 	}
 
 	var info checksuminfo
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	err := json.Unmarshal(data, &info)
 	if err != nil {
 		return err
@@ -167,6 +167,7 @@ func (m fsMetaV1) ToObjectInfo(bucket, object string, fi os.FileInfo) ObjectInfo
 	}
 
 	objInfo.ETag = extractETag(m.Meta)
+
 	objInfo.ContentType = m.Meta["content-type"]
 	objInfo.ContentEncoding = m.Meta["content-encoding"]
 	if storageClass, ok := m.Meta[xhttp.AmzStorageClass]; ok {
@@ -229,7 +230,7 @@ func (m *fsMetaV1) ReadFrom(ctx context.Context, lk *lock.LockedFile) (n int64, 
 		return 0, io.EOF
 	}
 
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	if err = json.Unmarshal(fsMetaBuf, m); err != nil {
 		return 0, err
 	}

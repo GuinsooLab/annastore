@@ -27,7 +27,7 @@ import (
 
 	jsoniter "github.com/json-iterator/go"
 	"github.com/klauspost/compress/s2"
-	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/internal/logger"
 	"github.com/tinylib/msgp/msgp"
 	"github.com/valyala/bytebufferpool"
 )
@@ -52,17 +52,17 @@ import (
 // Streams can be assumed to be sorted in ascending order.
 // If the stream ends before a false boolean it can be assumed it was truncated.
 
-const metacacheStreamVersion = 1
+const metacacheStreamVersion = 2
 
 // metacacheWriter provides a serializer of metacache objects.
 type metacacheWriter struct {
-	mw        *msgp.Writer
-	creator   func() error
-	closer    func() error
-	blockSize int
-
-	streamErr error
-	streamWg  sync.WaitGroup
+	streamErr   error
+	mw          *msgp.Writer
+	creator     func() error
+	closer      func() error
+	blockSize   int
+	streamWg    sync.WaitGroup
+	reuseBlocks bool
 }
 
 // newMetacacheWriter will create a serializer that will write objects in given order to the output.
@@ -141,6 +141,9 @@ func (w *metacacheWriter) write(objs ...metaCacheEntry) error {
 		if err != nil {
 			return err
 		}
+		if w.reuseBlocks || o.reusable {
+			metaDataPoolPut(o.metadata)
+		}
 	}
 
 	return nil
@@ -160,7 +163,7 @@ func (w *metacacheWriter) stream() (chan<- metaCacheEntry, error) {
 			return nil, errors.New("metacacheWriter: writer not initialized")
 		}
 	}
-	var objs = make(chan metaCacheEntry, 100)
+	objs := make(chan metaCacheEntry, 100)
 	w.streamErr = nil
 	w.streamWg.Add(1)
 	go func() {
@@ -262,7 +265,7 @@ func newMetacacheReader(r io.Reader) *metacacheReader {
 				return err
 			}
 			switch v {
-			case metacacheStreamVersion:
+			case 1, 2:
 			default:
 				return fmt.Errorf("metacacheReader: Unknown version: %d", v)
 			}
@@ -354,9 +357,13 @@ func (r *metacacheReader) next() (metaCacheEntry, error) {
 		r.err = err
 		return m, err
 	}
-	m.metadata, err = r.mr.ReadBytes(nil)
+	m.metadata, err = r.mr.ReadBytes(metaDataPoolGet())
 	if err == io.EOF {
 		err = io.ErrUnexpectedEOF
+	}
+	if len(m.metadata) == 0 && cap(m.metadata) >= metaDataReadDefault {
+		metaDataPoolPut(m.metadata)
+		m.metadata = nil
 	}
 	r.err = err
 	return m, err
@@ -399,7 +406,7 @@ func (r *metacacheReader) forwardTo(s string) error {
 		r.current.metadata = nil
 	}
 	// temporary name buffer.
-	var tmp = make([]byte, 0, 256)
+	tmp := make([]byte, 0, 256)
 	for {
 		if more, err := r.mr.ReadBool(); !more {
 			switch err {
@@ -450,7 +457,7 @@ func (r *metacacheReader) forwardTo(s string) error {
 // Will return io.EOF if end of stream is reached.
 // If requesting 0 objects nil error will always be returned regardless of at end of stream.
 // Use peek to determine if at end of stream.
-func (r *metacacheReader) readN(n int, inclDeleted, inclDirs bool, prefix string) (metaCacheEntriesSorted, error) {
+func (r *metacacheReader) readN(n int, inclDeleted, inclDirs, inclVersions bool, prefix string) (metaCacheEntriesSorted, error) {
 	r.checkInit()
 	if n == 0 {
 		return metaCacheEntriesSorted{}, nil
@@ -510,17 +517,21 @@ func (r *metacacheReader) readN(n int, inclDeleted, inclDirs bool, prefix string
 			r.mr.R.Skip(1)
 			return metaCacheEntriesSorted{o: res}, io.EOF
 		}
-		if meta.metadata, err = r.mr.ReadBytes(nil); err != nil {
+		if meta.metadata, err = r.mr.ReadBytes(metaDataPoolGet()); err != nil {
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
 			}
 			r.err = err
 			return metaCacheEntriesSorted{o: res}, err
 		}
-		if !inclDirs && meta.isDir() {
+		if len(meta.metadata) == 0 {
+			metaDataPoolPut(meta.metadata)
+			meta.metadata = nil
+		}
+		if !inclDirs && (meta.isDir() || (!inclVersions && meta.isObjectDir() && meta.isLatestDeletemarker())) {
 			continue
 		}
-		if !inclDeleted && meta.isLatestDeletemarker() {
+		if !inclDeleted && meta.isLatestDeletemarker() && meta.isObject() && !meta.isObjectDir() {
 			continue
 		}
 		res = append(res, meta)
@@ -565,12 +576,16 @@ func (r *metacacheReader) readAll(ctx context.Context, dst chan<- metaCacheEntry
 			r.err = err
 			return err
 		}
-		if meta.metadata, err = r.mr.ReadBytes(nil); err != nil {
+		if meta.metadata, err = r.mr.ReadBytes(metaDataPoolGet()); err != nil {
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
 			}
 			r.err = err
 			return err
+		}
+		if len(meta.metadata) == 0 {
+			metaDataPoolPut(meta.metadata)
+			meta.metadata = nil
 		}
 		select {
 		case <-ctx.Done():
@@ -823,7 +838,7 @@ type metacacheBlock struct {
 }
 
 func (b metacacheBlock) headerKV() map[string]string {
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	v, err := json.Marshal(b)
 	if err != nil {
 		logger.LogIf(context.Background(), err) // Unlikely

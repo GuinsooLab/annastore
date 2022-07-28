@@ -27,6 +27,8 @@ import (
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+
+	xioutil "github.com/minio/minio/internal/ioutil"
 )
 
 type warmBackendGCS struct {
@@ -43,21 +45,25 @@ func (gcs *warmBackendGCS) getDest(object string) string {
 	}
 	return destObj
 }
-func (gcs *warmBackendGCS) Put(ctx context.Context, key string, data io.Reader, length int64) error {
+
+// FIXME: add support for remote version ID in GCS remote tier and remove this.
+// Currently it's a no-op.
+
+func (gcs *warmBackendGCS) Put(ctx context.Context, key string, data io.Reader, length int64) (remoteVersionID, error) {
 	object := gcs.client.Bucket(gcs.Bucket).Object(gcs.getDest(key))
-	//TODO: set storage class
+	// TODO: set storage class
 	w := object.NewWriter(ctx)
 	if gcs.StorageClass != "" {
 		w.ObjectAttrs.StorageClass = gcs.StorageClass
 	}
-	if _, err := io.Copy(w, data); err != nil {
-		return gcsToObjectError(err, gcs.Bucket, key)
+	if _, err := xioutil.Copy(w, data); err != nil {
+		return "", gcsToObjectError(err, gcs.Bucket, key)
 	}
 
-	return w.Close()
+	return "", w.Close()
 }
 
-func (gcs *warmBackendGCS) Get(ctx context.Context, key string, opts WarmBackendGetOpts) (r io.ReadCloser, err error) {
+func (gcs *warmBackendGCS) Get(ctx context.Context, key string, rv remoteVersionID, opts WarmBackendGetOpts) (r io.ReadCloser, err error) {
 	// GCS storage decompresses a gzipped object by default and returns the data.
 	// Refer to https://cloud.google.com/storage/docs/transcoding#decompressive_transcoding
 	// Need to set `Accept-Encoding` header to `gzip` when issuing a GetObject call, to be able
@@ -68,12 +74,11 @@ func (gcs *warmBackendGCS) Get(ctx context.Context, key string, opts WarmBackend
 	r, err = object.NewRangeReader(ctx, opts.startOffset, opts.length)
 	if err != nil {
 		return nil, gcsToObjectError(err, gcs.Bucket, key)
-
 	}
 	return r, nil
 }
 
-func (gcs *warmBackendGCS) Remove(ctx context.Context, key string) error {
+func (gcs *warmBackendGCS) Remove(ctx context.Context, key string, rv remoteVersionID) error {
 	err := gcs.client.Bucket(gcs.Bucket).Object(gcs.getDest(key)).Delete(ctx)
 	return gcsToObjectError(err, gcs.Bucket, key)
 }

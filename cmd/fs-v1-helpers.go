@@ -24,9 +24,11 @@ import (
 	pathutil "path"
 	"runtime"
 	"strings"
+	"time"
 
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/lock"
+	xioutil "github.com/minio/minio/internal/ioutil"
+	"github.com/minio/minio/internal/lock"
+	"github.com/minio/minio/internal/logger"
 )
 
 // Removes only the file at given path does not remove
@@ -121,7 +123,7 @@ func fsMkdir(ctx context.Context, dirPath string) (err error) {
 		return err
 	}
 
-	if err = os.Mkdir((dirPath), 0777); err != nil {
+	if err = os.Mkdir((dirPath), 0o777); err != nil {
 		switch {
 		case osIsExist(err):
 			return errVolumeExists
@@ -166,6 +168,25 @@ func fsStat(ctx context.Context, statLoc string) (os.FileInfo, error) {
 	}
 
 	return fi, nil
+}
+
+// fsTouch updates a file access & modtime with current time
+func fsTouch(ctx context.Context, statLoc string) error {
+	if statLoc == "" {
+		logger.LogIf(ctx, errInvalidArgument)
+		return errInvalidArgument
+	}
+	if err := checkPathLength(statLoc); err != nil {
+		logger.LogIf(ctx, err)
+		return err
+	}
+	now := time.Now()
+	if err := os.Chtimes(statLoc, now, now); err != nil {
+		logger.LogIf(ctx, err)
+		return err
+	}
+
+	return nil
 }
 
 // Lookup if volume exists, returns volume attributes upon success.
@@ -248,6 +269,7 @@ func fsOpenFile(ctx context.Context, readPath string, offset int64) (io.ReadClos
 	// Stat to get the size of the file at path.
 	st, err := fr.Stat()
 	if err != nil {
+		fr.Close()
 		err = osErrToFileErr(err)
 		if err != errFileNotFound {
 			logger.LogIf(ctx, err)
@@ -257,6 +279,7 @@ func fsOpenFile(ctx context.Context, readPath string, offset int64) (io.ReadClos
 
 	// Verify if its not a regular file, since subsequent Seek is undefined.
 	if !st.Mode().IsRegular() {
+		fr.Close()
 		return nil, 0, errIsNotRegular
 	}
 
@@ -264,6 +287,7 @@ func fsOpenFile(ctx context.Context, readPath string, offset int64) (io.ReadClos
 	if offset > 0 {
 		_, err = fr.Seek(offset, io.SeekStart)
 		if err != nil {
+			fr.Close()
 			logger.LogIf(ctx, err)
 			return nil, 0, err
 		}
@@ -285,7 +309,7 @@ func fsCreateFile(ctx context.Context, filePath string, reader io.Reader, falloc
 		return 0, err
 	}
 
-	if err := mkdirAll(pathutil.Dir(filePath), 0777); err != nil {
+	if err := mkdirAll(pathutil.Dir(filePath), 0o777); err != nil {
 		switch {
 		case osIsPermission(err):
 			return 0, errFileAccessDenied
@@ -303,15 +327,15 @@ func fsCreateFile(ctx context.Context, filePath string, reader io.Reader, falloc
 
 	flags := os.O_CREATE | os.O_WRONLY
 	if globalFSOSync {
-		flags = flags | os.O_SYNC
+		flags |= os.O_SYNC
 	}
-	writer, err := lock.Open(filePath, flags, 0666)
+	writer, err := lock.Open(filePath, flags, 0o666)
 	if err != nil {
 		return 0, osErrToFileErr(err)
 	}
 	defer writer.Close()
 
-	bytesWritten, err := io.Copy(writer, reader)
+	bytesWritten, err := xioutil.Copy(writer, reader)
 	if err != nil {
 		logger.LogIf(ctx, err)
 		return 0, err

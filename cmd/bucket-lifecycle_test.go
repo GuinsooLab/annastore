@@ -19,13 +19,12 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"net/http"
 	"testing"
 	"time"
 
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/pkg/bucket/lifecycle"
+	"github.com/minio/minio/internal/bucket/lifecycle"
+	xhttp "github.com/minio/minio/internal/http"
 )
 
 // TestParseRestoreObjStatus tests parseRestoreObjStatus
@@ -37,7 +36,7 @@ func TestParseRestoreObjStatus(t *testing.T) {
 	}{
 		{
 			// valid: represents a restored object, 'pending' expiry.
-			restoreHdr: "ongoing-request=false, expiry-date=Fri, 21 Dec 2012 00:00:00 GMT",
+			restoreHdr: `ongoing-request="false", expiry-date="Fri, 21 Dec 2012 00:00:00 GMT"`,
 			expectedStatus: restoreObjStatus{
 				ongoing: false,
 				expiry:  time.Date(2012, 12, 21, 0, 0, 0, 0, time.UTC),
@@ -46,7 +45,7 @@ func TestParseRestoreObjStatus(t *testing.T) {
 		},
 		{
 			// valid: represents an ongoing restore object request.
-			restoreHdr: "ongoing-request=true",
+			restoreHdr: `ongoing-request="true"`,
 			expectedStatus: restoreObjStatus{
 				ongoing: true,
 			},
@@ -54,13 +53,13 @@ func TestParseRestoreObjStatus(t *testing.T) {
 		},
 		{
 			// invalid; ongoing restore object request can't have expiry set on it.
-			restoreHdr:     "ongoing-request=true, expiry-date=Fri, 21 Dec 2012 00:00:00 GMT",
+			restoreHdr:     `ongoing-request="true", expiry-date="Fri, 21 Dec 2012 00:00:00 GMT"`,
 			expectedStatus: restoreObjStatus{},
 			expectedErr:    errRestoreHDRMalformed,
 		},
 		{
 			// invalid; completed restore object request must have expiry set on it.
-			restoreHdr:     "ongoing-request=false",
+			restoreHdr:     `ongoing-request="false"`,
 			expectedStatus: restoreObjStatus{},
 			expectedErr:    errRestoreHDRMalformed,
 		},
@@ -204,7 +203,7 @@ func TestObjectIsRemote(t *testing.T) {
 		if got := fi.IsRemote(); got != tc.remote {
 			t.Fatalf("Test %d.a: expected %v got %v", i+1, tc.remote, got)
 		}
-		oi := fi.ToObjectInfo("bucket", "object")
+		oi := fi.ToObjectInfo("bucket", "object", false)
 		if got := oi.IsRemote(); got != tc.remote {
 			t.Fatalf("Test %d.b: expected %v got %v", i+1, tc.remote, got)
 		}
@@ -240,7 +239,7 @@ func TestValidateTransitionTier(t *testing.T) {
 			t.Fatalf("Test %d: Failed to parse lifecycle config %v", i+1, err)
 		}
 
-		err = validateTransitionTier(context.Background(), lc)
+		err = validateTransitionTier(lc)
 		if err != tc.expectedErr {
 			t.Fatalf("Test %d: Expected %v but got %v", i+1, tc.expectedErr, err)
 		}

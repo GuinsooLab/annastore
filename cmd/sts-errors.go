@@ -22,8 +22,8 @@ import (
 	"encoding/xml"
 	"net/http"
 
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
+	xhttp "github.com/minio/minio/internal/http"
+	"github.com/minio/minio/internal/logger"
 )
 
 // writeSTSErrorRespone writes error headers
@@ -48,14 +48,10 @@ func writeSTSErrorResponse(ctx context.Context, w http.ResponseWriter, isErrCode
 	if errCtxt != nil {
 		stsErrorResponse.Error.Message = errCtxt.Error()
 	}
-	var logKind logger.Kind
 	switch errCode {
-	case ErrSTSInternalError, ErrSTSNotInitialized:
-		logKind = logger.Minio
-	default:
-		logKind = logger.All
+	case ErrSTSInternalError, ErrSTSNotInitialized, ErrSTSUpstreamError:
+		logger.LogIf(ctx, errCtxt, logger.Minio)
 	}
-	logger.LogIf(ctx, errCtxt, logKind)
 	encodedErrorResponse := encodeResponse(stsErrorResponse)
 	writeResponse(w, err.HTTPStatusCode, encodedErrorResponse, mimeXML)
 }
@@ -93,7 +89,10 @@ const (
 	ErrSTSClientGrantsExpiredToken
 	ErrSTSInvalidClientGrantsToken
 	ErrSTSMalformedPolicyDocument
+	ErrSTSInsecureConnection
+	ErrSTSInvalidClientCertificate
 	ErrSTSNotInitialized
+	ErrSTSUpstreamError
 	ErrSTSInternalError
 )
 
@@ -145,10 +144,25 @@ var stsErrCodes = stsErrorCodeMap{
 		Description:    "The request was rejected because the policy document was malformed.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
+	ErrSTSInsecureConnection: {
+		Code:           "InsecureConnection",
+		Description:    "The request was made over a plain HTTP connection. A TLS connection is required.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrSTSInvalidClientCertificate: {
+		Code:           "InvalidClientCertificate",
+		Description:    "The provided client certificate is invalid. Retry with a different certificate.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
 	ErrSTSNotInitialized: {
 		Code:           "STSNotInitialized",
 		Description:    "STS API not initialized, please try again.",
 		HTTPStatusCode: http.StatusServiceUnavailable,
+	},
+	ErrSTSUpstreamError: {
+		Code:           "InternalError",
+		Description:    "An upstream service required for this operation failed - please try again or contact an administrator.",
+		HTTPStatusCode: http.StatusInternalServerError,
 	},
 	ErrSTSInternalError: {
 		Code:           "InternalError",

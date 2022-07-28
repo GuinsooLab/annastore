@@ -31,6 +31,7 @@ To permanently delete an object you need to specify the version you want to dele
 ![delete_version_id](https://raw.githubusercontent.com/minio/minio/master/docs/bucket/versioning/versioning_DELETE_versionEnabled_id.png)
 
 ## Concepts
+
 - All Buckets on MinIO are always in one of the following states: unversioned (the default) and all other existing deployments, versioning-enabled, or versioning-suspended.
 - Versioning state applies to all of the objects in the versioning enabled bucket. The first time you enable a bucket for versioning, objects in the bucket are thereafter always versioned and given a unique version ID.
 - Existing or newer buckets can be created with versioning enabled and eventually can be suspended as well. Existing versions of objects stay as is and can still be accessed using the version ID.
@@ -38,13 +39,16 @@ To permanently delete an object you need to specify the version you want to dele
 - **Versioning feature is only available in erasure coded and distributed erasure coded setups**.
 
 ## How to configure versioning on a bucket
+
 Each bucket created has a versioning configuration associated with it. By default bucket is unversioned as shown below
+
 ```
 <VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
 </VersioningConfiguration>
 ```
 
 To enable versioning, you send a request to MinIO with a versioning configuration with Status set to `Enabled`.
+
 ```
 <VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
   <Status>Enabled</Status>
@@ -52,13 +56,49 @@ To enable versioning, you send a request to MinIO with a versioning configuratio
 ```
 
 Similarly to suspend versioning set the configuration with Status set to `Suspended`.
+
 ```
 <VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
   <Status>Suspended</Status>
 </VersioningConfiguration>
 ```
 
-Only users with explicit permissions or the root credential can configure the versioning state of any bucket.
+## MinIO extension to Bucket Versioning
+
+### Motivation
+
+**PLEASE READ: This feature is meant for advanced usecases only where the setup is using bucket versioning or with replicated buckets, use this feature to optimize versioning behavior for some specific applications. MinIO experts will evaluate and guide on the benefits for your application, please reach out to us on <https://subnet.min.io>.**
+
+Spark/Hadoop workloads which use Hadoop MR Committer v1/v2 algorithm upload objects to a temporary prefix in a bucket. These objects are 'renamed' to a different prefix on Job commit. Object storage admins are forced to configure separate ILM policies to expire these objects and their versions to reclaim space.
+
+### Solution
+
+To exclude objects under a list of prefix (glob) patterns from being versioned, you can send the following versioning configuration with Status set to `Enabled`.
+
+```
+<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+        <Status>Enabled</Status>
+        <ExcludeFolders>true</ExcludeFolders>
+
+        <ExcludedPrefixes>
+          <Prefix>*/_temporary</Prefix>
+        </ExcludedPrefixes>
+        <ExcludedPrefixes>
+          <Prefix>*/__magic</Prefix>
+        </ExcludedPrefixes>
+        <ExcludedPrefixes>
+          <Prefix>*/_staging</Prefix>
+        </ExcludedPrefixes>
+
+        <!-- .. up to 10 prefixes in all -->
+</VersioningConfiguration>
+```
+
+### Features
+
+- Objects matching these prefixes will behave as though versioning were suspended. These objects **will not** be replicated if bucket has replication configured.
+- Objects matching these prefixes will also not leave `null` delete markers, dramatically reduces namespace pollution while keeping the benefits of replication.
+- Users with explicit permissions or the root credential can configure the versioning state of any bucket.
 
 ## Examples of enabling bucket versioning using MinIO Java SDK
 
@@ -160,6 +200,7 @@ public class IsVersioningEnabled {
 ```
 
 ## Explore Further
+
 - [Use `minio-java` SDK with MinIO Server](https://docs.minio.io/docs/java-client-quickstart-guide.html)
 - [Object Lock and Immutablity Guide](https://docs.minio.io/docs/minio-bucket-object-lock-guide.html)
 - [MinIO Admin Complete Guide](https://docs.min.io/docs/minio-admin-complete-guide.html)

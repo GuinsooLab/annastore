@@ -21,14 +21,22 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/minio/madmin-go"
 	minio "github.com/minio/minio-go/v7"
 	miniogo "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+)
+
+// getRemoteTierTargetInstanceTransport contains a singleton roundtripper.
+var (
+	getRemoteTierTargetInstanceTransport     http.RoundTripper
+	getRemoteTierTargetInstanceTransportOnce sync.Once
 )
 
 type warmBackendS3 struct {
@@ -56,14 +64,17 @@ func (s3 *warmBackendS3) getDest(object string) string {
 	return destObj
 }
 
-func (s3 *warmBackendS3) Put(ctx context.Context, object string, r io.Reader, length int64) error {
-	_, err := s3.client.PutObject(ctx, s3.Bucket, s3.getDest(object), r, length, minio.PutObjectOptions{StorageClass: s3.StorageClass})
-	return s3.ToObjectError(err, object)
+func (s3 *warmBackendS3) Put(ctx context.Context, object string, r io.Reader, length int64) (remoteVersionID, error) {
+	res, err := s3.client.PutObject(ctx, s3.Bucket, s3.getDest(object), r, length, minio.PutObjectOptions{StorageClass: s3.StorageClass})
+	return remoteVersionID(res.VersionID), s3.ToObjectError(err, object)
 }
 
-func (s3 *warmBackendS3) Get(ctx context.Context, object string, opts WarmBackendGetOpts) (io.ReadCloser, error) {
+func (s3 *warmBackendS3) Get(ctx context.Context, object string, rv remoteVersionID, opts WarmBackendGetOpts) (io.ReadCloser, error) {
 	gopts := minio.GetObjectOptions{}
 
+	if rv != "" {
+		gopts.VersionID = string(rv)
+	}
 	if opts.startOffset >= 0 && opts.length > 0 {
 		if err := gopts.SetRange(opts.startOffset, opts.startOffset+opts.length-1); err != nil {
 			return nil, s3.ToObjectError(err, object)
@@ -78,20 +89,21 @@ func (s3 *warmBackendS3) Get(ctx context.Context, object string, opts WarmBacken
 	return r, nil
 }
 
-func (s3 *warmBackendS3) Remove(ctx context.Context, object string) error {
-	err := s3.client.RemoveObject(ctx, s3.Bucket, s3.getDest(object), minio.RemoveObjectOptions{})
+func (s3 *warmBackendS3) Remove(ctx context.Context, object string, rv remoteVersionID) error {
+	ropts := minio.RemoveObjectOptions{}
+	if rv != "" {
+		ropts.VersionID = string(rv)
+	}
+	err := s3.client.RemoveObject(ctx, s3.Bucket, s3.getDest(object), ropts)
 	return s3.ToObjectError(err, object)
 }
 
 func (s3 *warmBackendS3) InUse(ctx context.Context) (bool, error) {
-	result, err := s3.core.ListObjectsV2(s3.Bucket, s3.Prefix, "", false, "/", 1)
+	result, err := s3.core.ListObjectsV2(s3.Bucket, s3.Prefix, "", "", slashSeparator, 1)
 	if err != nil {
 		return false, s3.ToObjectError(err)
 	}
-	if len(result.CommonPrefixes) > 0 || len(result.Contents) > 0 {
-		return true, nil
-	}
-	return false, nil
+	return len(result.CommonPrefixes) > 0 || len(result.Contents) > 0, nil
 }
 
 func newWarmBackendS3(conf madmin.TierS3) (*warmBackendS3, error) {
@@ -99,14 +111,19 @@ func newWarmBackendS3(conf madmin.TierS3) (*warmBackendS3, error) {
 	if err != nil {
 		return nil, err
 	}
-	creds := credentials.NewStaticV4(conf.AccessKey, conf.SecretKey, "")
-	getRemoteTargetInstanceTransportOnce.Do(func() {
-		getRemoteTargetInstanceTransport = newGatewayHTTPTransport(10 * time.Minute)
+	var creds *credentials.Credentials
+	if conf.AWSRole {
+		creds = credentials.NewChainCredentials(defaultAWSCredProvider)
+	} else {
+		creds = credentials.NewStaticV4(conf.AccessKey, conf.SecretKey, "")
+	}
+	getRemoteTierTargetInstanceTransportOnce.Do(func() {
+		getRemoteTierTargetInstanceTransport = newGatewayHTTPTransport(10 * time.Minute)
 	})
 	opts := &minio.Options{
 		Creds:     creds,
 		Secure:    u.Scheme == "https",
-		Transport: getRemoteTargetInstanceTransport,
+		Transport: getRemoteTierTargetInstanceTransport,
 	}
 	client, err := minio.New(u.Host, opts)
 	if err != nil {

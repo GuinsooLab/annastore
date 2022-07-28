@@ -27,9 +27,9 @@ import (
 	"testing"
 
 	"github.com/klauspost/compress/s2"
-	"github.com/minio/minio/cmd/config/compress"
-	"github.com/minio/minio/cmd/crypto"
-	"github.com/minio/minio/pkg/trie"
+	"github.com/minio/minio/internal/config/compress"
+	"github.com/minio/minio/internal/crypto"
+	"github.com/minio/pkg/trie"
 )
 
 // Tests validate bucket name.
@@ -320,35 +320,42 @@ func TestIsCompressed(t *testing.T) {
 	}{
 		0: {
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"X-Minio-Internal-compression": compressionAlgorithmV1,
-					"content-type": "application/octet-stream",
-					"etag":         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
+				UserDefined: map[string]string{
+					"X-Minio-Internal-compression": compressionAlgorithmV1,
+					"content-type":                 "application/octet-stream",
+					"etag":                         "b3ff3ef3789147152fbfbc50efba4bfd-2",
+				},
 			},
 			result: true,
 		},
 		1: {
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"X-Minio-Internal-compression": compressionAlgorithmV2,
-					"content-type": "application/octet-stream",
-					"etag":         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
+				UserDefined: map[string]string{
+					"X-Minio-Internal-compression": compressionAlgorithmV2,
+					"content-type":                 "application/octet-stream",
+					"etag":                         "b3ff3ef3789147152fbfbc50efba4bfd-2",
+				},
 			},
 			result: true,
 		},
 		2: {
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"X-Minio-Internal-compression": "unknown/compression/type",
-					"content-type": "application/octet-stream",
-					"etag":         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
+				UserDefined: map[string]string{
+					"X-Minio-Internal-compression": "unknown/compression/type",
+					"content-type":                 "application/octet-stream",
+					"etag":                         "b3ff3ef3789147152fbfbc50efba4bfd-2",
+				},
 			},
 			result: true,
 			err:    true,
 		},
 		3: {
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"X-Minio-Internal-compression": compressionAlgorithmV2,
-					"content-type": "application/octet-stream",
-					"etag":         "b3ff3ef3789147152fbfbc50efba4bfd-2",
-					crypto.MetaIV:  "yes",
+				UserDefined: map[string]string{
+					"X-Minio-Internal-compression": compressionAlgorithmV2,
+					"content-type":                 "application/octet-stream",
+					"etag":                         "b3ff3ef3789147152fbfbc50efba4bfd-2",
+					crypto.MetaIV:                  "yes",
 				},
 			},
 			result: true,
@@ -356,16 +363,20 @@ func TestIsCompressed(t *testing.T) {
 		},
 		4: {
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"X-Minio-Internal-XYZ": "klauspost/compress/s2",
-					"content-type": "application/octet-stream",
-					"etag":         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
+				UserDefined: map[string]string{
+					"X-Minio-Internal-XYZ": "klauspost/compress/s2",
+					"content-type":         "application/octet-stream",
+					"etag":                 "b3ff3ef3789147152fbfbc50efba4bfd-2",
+				},
 			},
 			result: false,
 		},
 		5: {
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"content-type": "application/octet-stream",
-					"etag": "b3ff3ef3789147152fbfbc50efba4bfd-2"},
+				UserDefined: map[string]string{
+					"content-type": "application/octet-stream",
+					"etag":         "b3ff3ef3789147152fbfbc50efba4bfd-2",
+				},
 			},
 			result: false,
 		},
@@ -468,10 +479,12 @@ func TestGetActualSize(t *testing.T) {
 	}{
 		{
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"X-Minio-Internal-compression": "klauspost/compress/s2",
+				UserDefined: map[string]string{
+					"X-Minio-Internal-compression": "klauspost/compress/s2",
 					"X-Minio-Internal-actual-size": "100000001",
 					"content-type":                 "application/octet-stream",
-					"etag":                         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
+					"etag":                         "b3ff3ef3789147152fbfbc50efba4bfd-2",
+				},
 				Parts: []ObjectPartInfo{
 					{
 						Size:       39235668,
@@ -487,19 +500,23 @@ func TestGetActualSize(t *testing.T) {
 		},
 		{
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"X-Minio-Internal-compression": "klauspost/compress/s2",
+				UserDefined: map[string]string{
+					"X-Minio-Internal-compression": "klauspost/compress/s2",
 					"X-Minio-Internal-actual-size": "841",
 					"content-type":                 "application/octet-stream",
-					"etag":                         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
+					"etag":                         "b3ff3ef3789147152fbfbc50efba4bfd-2",
+				},
 				Parts: []ObjectPartInfo{},
 			},
 			result: 841,
 		},
 		{
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"X-Minio-Internal-compression": "klauspost/compress/s2",
-					"content-type": "application/octet-stream",
-					"etag":         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
+				UserDefined: map[string]string{
+					"X-Minio-Internal-compression": "klauspost/compress/s2",
+					"content-type":                 "application/octet-stream",
+					"etag":                         "b3ff3ef3789147152fbfbc50efba4bfd-2",
+				},
 				Parts: []ObjectPartInfo{},
 			},
 			result: -1,
@@ -576,7 +593,7 @@ func TestGetCompressedOffsets(t *testing.T) {
 		},
 	}
 	for i, test := range testCases {
-		startOffset, snappyStartOffset, firstPart := getCompressedOffsets(test.objInfo, test.offset)
+		startOffset, snappyStartOffset, firstPart, _, _ := getCompressedOffsets(test.objInfo, test.offset, nil)
 		if startOffset != test.startOffset {
 			t.Errorf("Test %d - expected startOffset %d but received %d",
 				i, test.startOffset, startOffset)
@@ -594,19 +611,20 @@ func TestGetCompressedOffsets(t *testing.T) {
 
 func TestS2CompressReader(t *testing.T) {
 	tests := []struct {
-		name string
-		data []byte
+		name    string
+		data    []byte
+		wantIdx bool
 	}{
 		{name: "empty", data: nil},
-		{name: "small", data: []byte("hello, world")},
-		{name: "large", data: bytes.Repeat([]byte("hello, world"), 1000)},
+		{name: "small", data: []byte("hello, world!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")},
+		{name: "large", data: bytes.Repeat([]byte("hello, world"), 1000000), wantIdx: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := make([]byte, 100) // make small buffer to ensure multiple reads are required for large case
 
-			r := newS2CompressReader(bytes.NewReader(tt.data), int64(len(tt.data)))
+			r, idxCB := newS2CompressReader(bytes.NewReader(tt.data), int64(len(tt.data)), false)
 			defer r.Close()
 
 			var rdrBuf bytes.Buffer
@@ -614,7 +632,26 @@ func TestS2CompressReader(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-
+			r.Close()
+			idx := idxCB()
+			if !tt.wantIdx && len(idx) > 0 {
+				t.Errorf("index returned above threshold")
+			}
+			if tt.wantIdx {
+				if idx == nil {
+					t.Errorf("no index returned")
+				}
+				var index s2.Index
+				_, err = index.Load(s2.RestoreIndexHeaders(idx))
+				if err != nil {
+					t.Errorf("error loading index: %v", err)
+				}
+				t.Log("size:", len(idx))
+				t.Log(string(index.JSON()))
+				if index.TotalUncompressed != int64(len(tt.data)) {
+					t.Errorf("Expected size %d, got %d", len(tt.data), index.TotalUncompressed)
+				}
+			}
 			var stdBuf bytes.Buffer
 			w := s2.NewWriter(&stdBuf)
 			_, err = io.CopyBuffer(w, bytes.NewReader(tt.data), buf)

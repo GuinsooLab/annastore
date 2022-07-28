@@ -28,9 +28,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minio/minio/pkg/auth"
-	iampolicy "github.com/minio/minio/pkg/iam/policy"
+	"github.com/minio/minio/internal/auth"
+	iampolicy "github.com/minio/pkg/iam/policy"
 )
+
+type nullReader struct{}
+
+func (r *nullReader) Read(b []byte) (int, error) {
+	return len(b), nil
+}
 
 // Test get request auth type.
 func TestGetRequestAuthType(t *testing.T) {
@@ -38,6 +44,7 @@ func TestGetRequestAuthType(t *testing.T) {
 		req   *http.Request
 		authT authType
 	}
+	nopCloser := ioutil.NopCloser(io.LimitReader(&nullReader{}, 1024))
 	testCases := []testCase{
 		// Test case - 1
 		// Check for generic signature v4 header.
@@ -54,6 +61,7 @@ func TestGetRequestAuthType(t *testing.T) {
 					"Content-Encoding":     []string{streamingContentEncoding},
 				},
 				Method: http.MethodPut,
+				Body:   nopCloser,
 			},
 			authT: authTypeStreamingSigned,
 		},
@@ -113,6 +121,7 @@ func TestGetRequestAuthType(t *testing.T) {
 					"Content-Type": []string{"multipart/form-data"},
 				},
 				Method: http.MethodPost,
+				Body:   nopCloser,
 			},
 			authT: authTypePostPolicy,
 		},
@@ -220,6 +229,7 @@ func TestIsRequestPresignedSignatureV2(t *testing.T) {
 		q := inputReq.URL.Query()
 		q.Add(testCase.inputQueryKey, testCase.inputQueryValue)
 		inputReq.URL.RawQuery = q.Encode()
+		inputReq.ParseForm()
 
 		actualResult := isRequestPresignedSignatureV2(inputReq)
 		if testCase.expectedResult != actualResult {
@@ -254,6 +264,7 @@ func TestIsRequestPresignedSignatureV4(t *testing.T) {
 		q := inputReq.URL.Query()
 		q.Add(testCase.inputQueryKey, testCase.inputQueryValue)
 		inputReq.URL.RawQuery = q.Encode()
+		inputReq.ParseForm()
 
 		actualResult := isRequestPresignedSignatureV4(inputReq)
 		if testCase.expectedResult != actualResult {
@@ -336,7 +347,8 @@ func mustNewSignedEmptyMD5Request(method string, urlStr string, contentLength in
 }
 
 func mustNewSignedBadMD5Request(method string, urlStr string, contentLength int64,
-	body io.ReadSeeker, t *testing.T) *http.Request {
+	body io.ReadSeeker, t *testing.T,
+) *http.Request {
 	req := mustNewRequest(method, urlStr, contentLength, body, t)
 	req.Header.Set("Content-Md5", "YWFhYWFhYWFhYWFhYWFhCg==")
 	cred := globalActiveCred
@@ -357,11 +369,14 @@ func TestIsReqAuthenticated(t *testing.T) {
 		t.Fatalf("unable initialize config file, %s", err)
 	}
 
-	newAllSubsystems()
+	initAllSubsystems()
 
-	initAllSubsystems(context.Background(), objLayer)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	globalIAMSys.InitStore(objLayer)
+	initConfigSubsystem(ctx, objLayer)
+
+	globalIAMSys.Init(ctx, objLayer, globalEtcdClient, 2*time.Second)
 
 	creds, err := auth.CreateCredentials("myuser", "mypassword")
 	if err != nil {
@@ -387,10 +402,9 @@ func TestIsReqAuthenticated(t *testing.T) {
 		{mustNewSignedRequest(http.MethodGet, "http://127.0.0.1:9000", 0, nil, t), ErrNone},
 	}
 
-	ctx := context.Background()
 	// Validates all testcases.
 	for i, testCase := range testCases {
-		s3Error := isReqAuthenticated(ctx, testCase.req, globalServerRegion, serviceS3)
+		s3Error := isReqAuthenticated(ctx, testCase.req, globalSite.Region, serviceS3)
 		if s3Error != testCase.s3Error {
 			if _, err := ioutil.ReadAll(testCase.req.Body); toAPIErrorCode(ctx, err) != testCase.s3Error {
 				t.Fatalf("Test %d: Unexpected S3 error: want %d - got %d (got after reading request %s)", i, testCase.s3Error, s3Error, toAPIError(ctx, err).Code)
@@ -428,15 +442,15 @@ func TestCheckAdminRequestAuthType(t *testing.T) {
 	}
 	ctx := context.Background()
 	for i, testCase := range testCases {
-		if _, s3Error := checkAdminRequestAuth(ctx, testCase.Request, iampolicy.AllAdminActions, globalServerRegion); s3Error != testCase.ErrCode {
+		if _, s3Error := checkAdminRequestAuth(ctx, testCase.Request, iampolicy.AllAdminActions, globalSite.Region); s3Error != testCase.ErrCode {
 			t.Errorf("Test %d: Unexpected s3error returned wanted %d, got %d", i, testCase.ErrCode, s3Error)
 		}
 	}
 }
 
 func TestValidateAdminSignature(t *testing.T) {
-
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	objLayer, fsDir, err := prepareFS()
 	if err != nil {
@@ -448,11 +462,11 @@ func TestValidateAdminSignature(t *testing.T) {
 		t.Fatalf("unable initialize config file, %s", err)
 	}
 
-	newAllSubsystems()
+	initAllSubsystems()
 
-	initAllSubsystems(context.Background(), objLayer)
+	initConfigSubsystem(ctx, objLayer)
 
-	globalIAMSys.InitStore(objLayer)
+	globalIAMSys.Init(ctx, objLayer, globalEtcdClient, 2*time.Second)
 
 	creds, err := auth.CreateCredentials("admin", "mypassword")
 	if err != nil {

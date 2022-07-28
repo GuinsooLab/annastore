@@ -40,43 +40,29 @@ func registerDistErasureRouters(router *mux.Router, endpointServerPools Endpoint
 
 // List of some generic handlers which are applied for all incoming requests.
 var globalHandlers = []mux.MiddlewareFunc{
-	// filters HTTP headers which are treated as metadata and are reserved
-	// for internal use only.
-	filterReservedMetadata,
-	// Enforce rules specific for TLS requests
-	setSSETLSHandler,
+	// The generic tracer needs to be the first handler
+	// to catch all requests returned early by any other handler
+	httpTracer,
 	// Auth handler verifies incoming authorization headers and
 	// routes them accordingly. Client receives a HTTP error for
 	// invalid/unsupported signatures.
-	setAuthHandler,
+	//
 	// Validates all incoming requests to have a valid date header.
-	setTimeValidityHandler,
-	// Adds cache control for all browser requests.
-	setBrowserCacheControlHandler,
-	// Validates if incoming request is for restricted buckets.
-	setReservedBucketHandler,
+	setAuthHandler,
 	// Redirect some pre-defined browser request paths to a static location prefix.
 	setBrowserRedirectHandler,
 	// Adds 'crossdomain.xml' policy handler to serve legacy flash clients.
 	setCrossDomainPolicy,
-	// Limits all header sizes to a maximum fixed limit
-	setRequestHeaderSizeLimitHandler,
-	// Limits all requests size to a maximum fixed limit
-	setRequestSizeLimitHandler,
+	// Limits all body and header sizes to a maximum fixed limit
+	setRequestLimitHandler,
 	// Network statistics
 	setHTTPStatsHandler,
 	// Validate all the incoming requests.
 	setRequestValidityHandler,
-	// Forward path style requests to actual host in a bucket federated setup.
-	setBucketForwardingHandler,
-	// set HTTP security headers such as Content-Security-Policy.
-	addSecurityHeaders,
 	// set x-amz-request-id header.
 	addCustomHeaders,
-	// add redirect handler to redirect
-	// requests when object layer is not
-	// initialized.
-	setRedirectHandler,
+	// Add bucket forwarding handler
+	setBucketForwardingHandler,
 	// Add new handlers here.
 }
 
@@ -91,15 +77,8 @@ func configureServerHandler(endpointServerPools EndpointServerPools) (http.Handl
 		registerDistErasureRouters(router, endpointServerPools)
 	}
 
-	// Register web router when its enabled.
-	if globalBrowserEnabled {
-		if err := registerWebRouter(router); err != nil {
-			return nil, err
-		}
-	}
-
 	// Add Admin router, all APIs are enabled in server mode.
-	registerAdminRouter(router, true, true)
+	registerAdminRouter(router, true)
 
 	// Add healthcheck router
 	registerHealthCheckRouter(router)

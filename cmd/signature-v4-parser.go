@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/pkg/auth"
+	"github.com/minio/minio/internal/auth"
+	xhttp "github.com/minio/minio/internal/http"
 )
 
 // credentialHeader data type represents structured form of Credential
@@ -50,7 +50,7 @@ func (c credentialHeader) getScope() string {
 }
 
 func getReqAccessKeyV4(r *http.Request, region string, stype serviceType) (auth.Credentials, bool, APIErrorCode) {
-	ch, s3Err := parseCredentialHeader("Credential="+r.URL.Query().Get(xhttp.AmzCredential), region, stype)
+	ch, s3Err := parseCredentialHeader("Credential="+r.Form.Get(xhttp.AmzCredential), region, stype)
 	if s3Err != ErrNone {
 		// Strip off the Algorithm prefix.
 		v4Auth := strings.TrimPrefix(r.Header.Get("Authorization"), signV4Algorithm)
@@ -63,7 +63,7 @@ func getReqAccessKeyV4(r *http.Request, region string, stype serviceType) (auth.
 			return auth.Credentials{}, false, s3Err
 		}
 	}
-	return checkKeyValid(ch.accessKey)
+	return checkKeyValid(r, ch.accessKey)
 }
 
 // parse credentialHeader string into its structured form.
@@ -107,7 +107,6 @@ func parseCredentialHeader(credElement string, region string, stype serviceType)
 	// Should validate region, only if region is set.
 	if !isValidRegion(sRegion, region) {
 		return ch, ErrAuthorizationHeaderMalformed
-
 	}
 	if credElements[2] != string(stype) {
 		switch stype {
@@ -261,7 +260,7 @@ func parseSignV4(v4Auth string, region string, stype serviceType) (sv signValues
 	// Replace all spaced strings, some clients can send spaced
 	// parameters and some won't. So we pro-actively remove any spaces
 	// to make parsing easier.
-	v4Auth = strings.Replace(v4Auth, " ", "", -1)
+	v4Auth = strings.ReplaceAll(v4Auth, " ", "")
 	if v4Auth == "" {
 		return sv, ErrAuthHeaderEmpty
 	}

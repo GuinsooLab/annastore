@@ -19,7 +19,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,14 +28,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/minio/minio/cmd/config/cache"
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
-	objectlock "github.com/minio/minio/pkg/bucket/object/lock"
-	"github.com/minio/minio/pkg/color"
-	"github.com/minio/minio/pkg/hash"
-	"github.com/minio/minio/pkg/sync/errgroup"
-	"github.com/minio/minio/pkg/wildcard"
+	objectlock "github.com/minio/minio/internal/bucket/object/lock"
+	"github.com/minio/minio/internal/color"
+	"github.com/minio/minio/internal/config/cache"
+	"github.com/minio/minio/internal/disk"
+	"github.com/minio/minio/internal/hash"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/minio/internal/sync/errgroup"
+	"github.com/minio/pkg/wildcard"
 )
 
 const (
@@ -57,6 +56,13 @@ const (
 
 	// CommitFailed - cache writeback needs a retry.
 	CommitFailed cacheCommitStatus = "failed"
+)
+
+const (
+	// CommitWriteBack allows staging and write back of cached content for single object uploads
+	CommitWriteBack string = "writeback"
+	// CommitWriteThrough allows caching multipart uploads to disk synchronously
+	CommitWriteThrough string = "writethrough"
 )
 
 // String returns string representation of status
@@ -80,6 +86,13 @@ type CacheObjectLayer interface {
 	DeleteObjects(ctx context.Context, bucket string, objects []ObjectToDelete, opts ObjectOptions) ([]DeletedObject, []error)
 	PutObject(ctx context.Context, bucket, object string, data *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error)
 	CopyObject(ctx context.Context, srcBucket, srcObject, destBucket, destObject string, srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (objInfo ObjectInfo, err error)
+	// Multipart operations.
+	NewMultipartUpload(ctx context.Context, bucket, object string, opts ObjectOptions) (uploadID string, err error)
+	PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *PutObjReader, opts ObjectOptions) (info PartInfo, err error)
+	AbortMultipartUpload(ctx context.Context, bucket, object, uploadID string, opts ObjectOptions) error
+	CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, uploadedParts []CompletePart, opts ObjectOptions) (objInfo ObjectInfo, err error)
+	CopyObjectPart(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject, uploadID string, partID int, startOffset int64, length int64, srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (pi PartInfo, e error)
+
 	// Storage operations.
 	StorageInfo(ctx context.Context) CacheStorageInfo
 	CacheStats() *CacheStats
@@ -94,31 +107,35 @@ type cacheObjects struct {
 	// number of accesses after which to cache an object
 	after int
 	// commit objects in async manner
-	commitWriteback bool
+	commitWriteback    bool
+	commitWritethrough bool
+
 	// if true migration is in progress from v1 to v2
 	migrating bool
-	// mutex to protect migration bool
-	migMutex sync.Mutex
 	// retry queue for writeback cache mode to reattempt upload to backend
 	wbRetryCh chan ObjectInfo
 	// Cache stats
 	cacheStats *CacheStats
 
-	InnerGetObjectNInfoFn func(ctx context.Context, bucket, object string, rs *HTTPRangeSpec, h http.Header, lockType LockType, opts ObjectOptions) (gr *GetObjectReader, err error)
-	InnerGetObjectInfoFn  func(ctx context.Context, bucket, object string, opts ObjectOptions) (objInfo ObjectInfo, err error)
-	InnerDeleteObjectFn   func(ctx context.Context, bucket, object string, opts ObjectOptions) (objInfo ObjectInfo, err error)
-	InnerPutObjectFn      func(ctx context.Context, bucket, object string, data *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error)
-	InnerCopyObjectFn     func(ctx context.Context, srcBucket, srcObject, destBucket, destObject string, srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (objInfo ObjectInfo, err error)
+	InnerGetObjectNInfoFn          func(ctx context.Context, bucket, object string, rs *HTTPRangeSpec, h http.Header, lockType LockType, opts ObjectOptions) (gr *GetObjectReader, err error)
+	InnerGetObjectInfoFn           func(ctx context.Context, bucket, object string, opts ObjectOptions) (objInfo ObjectInfo, err error)
+	InnerDeleteObjectFn            func(ctx context.Context, bucket, object string, opts ObjectOptions) (objInfo ObjectInfo, err error)
+	InnerPutObjectFn               func(ctx context.Context, bucket, object string, data *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error)
+	InnerCopyObjectFn              func(ctx context.Context, srcBucket, srcObject, destBucket, destObject string, srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (objInfo ObjectInfo, err error)
+	InnerNewMultipartUploadFn      func(ctx context.Context, bucket, object string, opts ObjectOptions) (uploadID string, err error)
+	InnerPutObjectPartFn           func(ctx context.Context, bucket, object, uploadID string, partID int, data *PutObjReader, opts ObjectOptions) (info PartInfo, err error)
+	InnerAbortMultipartUploadFn    func(ctx context.Context, bucket, object, uploadID string, opts ObjectOptions) error
+	InnerCompleteMultipartUploadFn func(ctx context.Context, bucket, object, uploadID string, uploadedParts []CompletePart, opts ObjectOptions) (objInfo ObjectInfo, err error)
+	InnerCopyObjectPartFn          func(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject, uploadID string, partID int, startOffset int64, length int64, srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (pi PartInfo, e error)
 }
 
 func (c *cacheObjects) incHitsToMeta(ctx context.Context, dcache *diskCache, bucket, object string, size int64, eTag string, rs *HTTPRangeSpec) error {
 	metadata := map[string]string{"etag": eTag}
-	return dcache.SaveMetadata(ctx, bucket, object, metadata, size, rs, "", true)
+	return dcache.SaveMetadata(ctx, bucket, object, metadata, size, rs, "", true, false)
 }
 
 // Backend metadata could have changed through server side copy - reset cache metadata if that is the case
 func (c *cacheObjects) updateMetadataIfChanged(ctx context.Context, dcache *diskCache, bucket, object string, bkObjectInfo, cacheObjInfo ObjectInfo, rs *HTTPRangeSpec) error {
-
 	bkMeta := make(map[string]string, len(bkObjectInfo.UserDefined))
 	cacheMeta := make(map[string]string, len(cacheObjInfo.UserDefined))
 	for k, v := range bkObjectInfo.UserDefined {
@@ -140,7 +157,7 @@ func (c *cacheObjects) updateMetadataIfChanged(ctx context.Context, dcache *disk
 		bkObjectInfo.ETag != cacheObjInfo.ETag ||
 		bkObjectInfo.ContentType != cacheObjInfo.ContentType ||
 		!bkObjectInfo.Expires.Equal(cacheObjInfo.Expires) {
-		return dcache.SaveMetadata(ctx, bucket, object, getMetadata(bkObjectInfo), bkObjectInfo.Size, nil, "", false)
+		return dcache.SaveMetadata(ctx, bucket, object, getMetadata(bkObjectInfo), bkObjectInfo.Size, nil, "", false, false)
 	}
 	return c.incHitsToMeta(ctx, dcache, bucket, object, cacheObjInfo.Size, cacheObjInfo.ETag, rs)
 }
@@ -257,6 +274,10 @@ func (c *cacheObjects) GetObjectNInfo(ctx context.Context, bucket, object string
 			bReader.ObjInfo.CacheStatus = CacheMiss
 			return bReader, err
 		}
+		// serve cached content without ETag verification if writeback commit is not yet complete
+		if writebackInProgress(cacheReader.ObjInfo.UserDefined) {
+			return cacheReader, nil
+		}
 	}
 
 	objInfo, err := c.InnerGetObjectInfoFn(ctx, bucket, object, opts)
@@ -349,7 +370,7 @@ func (c *cacheObjects) GetObjectNInfo(ctx context.Context, bucket, object string
 				// use a new context to avoid locker prematurely timing out operation when the GetObjectNInfo returns.
 				dcache.Put(GlobalContext, bucket, object, bReader, bReader.ObjInfo.Size, rs, ObjectOptions{
 					UserDefined: getMetadata(bReader.ObjInfo),
-				}, false)
+				}, false, false)
 				return
 			}
 		}()
@@ -367,7 +388,7 @@ func (c *cacheObjects) GetObjectNInfo(ctx context.Context, bucket, object string
 			io.LimitReader(pr, bkReader.ObjInfo.Size),
 			bkReader.ObjInfo.Size, rs, ObjectOptions{
 				UserDefined: userDefined,
-			}, false)
+			}, false, false)
 		// close the read end of the pipe, so the error gets
 		// propagated to teeReader
 		pr.CloseWithError(putErr)
@@ -401,6 +422,10 @@ func (c *cacheObjects) GetObjectInfo(ctx context.Context, bucket, object string,
 		if cc == nil || (cc != nil && !cc.isStale(cachedObjInfo.ModTime)) {
 			// This is a cache hit, mark it so
 			c.cacheStats.incHit()
+			return cachedObjInfo, nil
+		}
+		// serve cache metadata without ETag verification if writeback commit is not yet complete
+		if writebackInProgress(cachedObjInfo.UserDefined) {
 			return cachedObjInfo, nil
 		}
 	}
@@ -488,8 +513,6 @@ func (c *cacheObjects) CacheStats() (cs *CacheStats) {
 
 // skipCache() returns true if cache migration is in progress
 func (c *cacheObjects) skipCache() bool {
-	c.migMutex.Lock()
-	defer c.migMutex.Unlock()
 	return c.migrating
 }
 
@@ -571,14 +594,25 @@ func newCache(config cache.Config) ([]*diskCache, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	var warningMsg string
 	for i, dir := range config.Drives {
 		// skip diskCache creation for cache drives missing a format.json
 		if formats[i] == nil {
 			caches = append(caches, nil)
 			continue
 		}
+		if !globalIsCICD && len(warningMsg) == 0 {
+			rootDsk, err := disk.IsRootDisk(dir, "/")
+			if err != nil {
+				warningMsg = fmt.Sprintf("Invalid cache dir %s err : %s", dir, err.Error())
+			}
+			if rootDsk {
+				warningMsg = fmt.Sprintf("cache dir cannot be part of root disk: %s", dir)
+			}
+		}
+
 		if err := checkAtimeSupport(dir); err != nil {
-			return nil, false, errors.New("Atime support required for disk caching")
+			return nil, false, fmt.Errorf("Atime support required for disk caching, atime check failed with %w", err)
 		}
 
 		cache, err := newDiskCache(ctx, dir, config)
@@ -587,11 +621,14 @@ func newCache(config cache.Config) ([]*diskCache, bool, error) {
 		}
 		caches = append(caches, cache)
 	}
+	if warningMsg != "" {
+		logger.Info(color.Yellow(fmt.Sprintf("WARNING: Usage of root disk for disk caching is deprecated: %s", warningMsg)))
+	}
 	return caches, migrating, nil
 }
 
 func (c *cacheObjects) migrateCacheFromV1toV2(ctx context.Context) {
-	logStartupMessage(color.Blue("Cache migration initiated ...."))
+	logger.Info(color.Blue("Cache migration initiated ...."))
 
 	g := errgroup.WithNErrs(len(c.cache))
 	for index, dc := range c.cache {
@@ -619,10 +656,8 @@ func (c *cacheObjects) migrateCacheFromV1toV2(ctx context.Context) {
 	}
 
 	// update migration status
-	c.migMutex.Lock()
-	defer c.migMutex.Unlock()
 	c.migrating = false
-	logStartupMessage(color.Blue("Cache migration completed successfully."))
+	logger.Info(color.Blue("Cache migration completed successfully."))
 }
 
 // PutObject - caches the uploaded object for single Put operations
@@ -663,31 +698,77 @@ func (c *cacheObjects) PutObject(ctx context.Context, bucket, object string, r *
 		return putObjectFn(ctx, bucket, object, r, opts)
 	}
 	if c.commitWriteback {
-		oi, err := dcache.Put(ctx, bucket, object, r, r.Size(), nil, opts, false)
+		oi, err := dcache.Put(ctx, bucket, object, r, r.Size(), nil, opts, false, true)
 		if err != nil {
 			return ObjectInfo{}, err
 		}
 		go c.uploadObject(GlobalContext, oi)
 		return oi, nil
 	}
-	objInfo, err = putObjectFn(ctx, bucket, object, r, opts)
-
-	if err == nil {
-		go func() {
-			// fill cache in the background
-			bReader, bErr := c.InnerGetObjectNInfoFn(GlobalContext, bucket, object, nil, http.Header{}, readLock, ObjectOptions{})
-			if bErr != nil {
-				return
-			}
-			defer bReader.Close()
-			oi, _, err := dcache.Stat(GlobalContext, bucket, object)
-			// avoid cache overwrite if another background routine filled cache
-			if err != nil || oi.ETag != bReader.ObjInfo.ETag {
-				dcache.Put(GlobalContext, bucket, object, bReader, bReader.ObjInfo.Size, nil, ObjectOptions{UserDefined: getMetadata(bReader.ObjInfo)}, false)
-			}
-		}()
+	if !c.commitWritethrough {
+		objInfo, err = putObjectFn(ctx, bucket, object, r, opts)
+		if err == nil {
+			go func() {
+				// fill cache in the background
+				bReader, bErr := c.InnerGetObjectNInfoFn(GlobalContext, bucket, object, nil, http.Header{}, readLock, ObjectOptions{})
+				if bErr != nil {
+					return
+				}
+				defer bReader.Close()
+				oi, _, err := dcache.Stat(GlobalContext, bucket, object)
+				// avoid cache overwrite if another background routine filled cache
+				if err != nil || oi.ETag != bReader.ObjInfo.ETag {
+					dcache.Put(GlobalContext, bucket, object, bReader, bReader.ObjInfo.Size, nil, ObjectOptions{UserDefined: getMetadata(bReader.ObjInfo)}, false, false)
+				}
+			}()
+		}
+		return objInfo, err
 	}
-	return objInfo, err
+	cLock, lkctx, cerr := dcache.GetLockContext(GlobalContext, bucket, object)
+	if cerr != nil {
+		return putObjectFn(ctx, bucket, object, r, opts)
+	}
+	defer cLock.Unlock(lkctx.Cancel)
+	// Initialize pipe to stream data to backend
+	pipeReader, pipeWriter := io.Pipe()
+	hashReader, err := hash.NewReader(pipeReader, size, "", "", r.ActualSize())
+	if err != nil {
+		return
+	}
+	// Initialize pipe to stream data to cache
+	rPipe, wPipe := io.Pipe()
+	infoCh := make(chan ObjectInfo)
+	go func() {
+		defer close(infoCh)
+		info, err := putObjectFn(ctx, bucket, object, NewPutObjReader(hashReader), opts)
+		pipeReader.CloseWithError(err)
+		rPipe.CloseWithError(err)
+		if err == nil {
+			infoCh <- info
+		}
+	}()
+
+	go func() {
+		_, err := dcache.put(lkctx.Context(), bucket, object, rPipe, r.Size(), nil, opts, false, false)
+		if err != nil {
+			logger.LogIf(lkctx.Context(), err)
+		}
+		// We do not care about errors to cached backend.
+		rPipe.Close()
+	}()
+
+	mwriter := cacheMultiWriter(pipeWriter, wPipe)
+	_, err = io.Copy(mwriter, r)
+	pipeWriter.Close()
+	wPipe.Close()
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	info := <-infoCh
+	if cerr = dcache.updateMetadata(lkctx.Context(), bucket, object, info.ETag, info.ModTime, info.Size); cerr != nil {
+		dcache.delete(bucket, object)
+	}
+	return info, err
 }
 
 // upload cached object to backend in async commit mode.
@@ -716,10 +797,10 @@ func (c *cacheObjects) uploadObject(ctx context.Context, oi ObjectInfo) {
 		return
 	}
 	var opts ObjectOptions
-	opts.UserDefined = make(map[string]string)
-	opts.UserDefined[xhttp.ContentMD5] = oi.UserDefined["content-md5"]
+	opts.UserDefined = cloneMSS(oi.UserDefined)
 	objInfo, err := c.InnerPutObjectFn(ctx, oi.Bucket, oi.Name, NewPutObjReader(hashReader), opts)
 	wbCommitStatus := CommitComplete
+	size := objInfo.Size
 	if err != nil {
 		wbCommitStatus = CommitFailed
 	}
@@ -730,12 +811,13 @@ func (c *cacheObjects) uploadObject(ctx context.Context, oi ObjectInfo) {
 		retryCnt, _ = strconv.Atoi(meta[writeBackRetryHeader])
 		retryCnt++
 		meta[writeBackRetryHeader] = strconv.Itoa(retryCnt)
+		size = cReader.ObjInfo.Size
 	} else {
 		delete(meta, writeBackRetryHeader)
 	}
 	meta[writeBackStatusHeader] = wbCommitStatus.String()
 	meta["etag"] = oi.ETag
-	dcache.SaveMetadata(ctx, oi.Bucket, oi.Name, meta, objInfo.Size, nil, "", false)
+	dcache.SaveMetadata(ctx, oi.Bucket, oi.Name, meta, size, nil, "", false, wbCommitStatus == CommitComplete)
 	if retryCnt > 0 {
 		// slow down retries
 		time.Sleep(time.Second * time.Duration(retryCnt%10+1))
@@ -745,6 +827,8 @@ func (c *cacheObjects) uploadObject(ctx context.Context, oi ObjectInfo) {
 
 func (c *cacheObjects) queueWritebackRetry(oi ObjectInfo) {
 	select {
+	case <-GlobalContext.Done():
+		return
 	case c.wbRetryCh <- oi:
 		c.uploadObject(GlobalContext, oi)
 	default:
@@ -759,13 +843,14 @@ func newServerCacheObjects(ctx context.Context, config cache.Config) (CacheObjec
 		return nil, err
 	}
 	c := &cacheObjects{
-		cache:           cache,
-		exclude:         config.Exclude,
-		after:           config.After,
-		migrating:       migrateSw,
-		migMutex:        sync.Mutex{},
-		commitWriteback: config.CommitWriteback,
-		cacheStats:      newCacheStats(),
+		cache:              cache,
+		exclude:            config.Exclude,
+		after:              config.After,
+		migrating:          migrateSw,
+		commitWriteback:    config.CacheCommitMode == CommitWriteBack,
+		commitWritethrough: config.CacheCommitMode == CommitWriteThrough,
+
+		cacheStats: newCacheStats(),
 		InnerGetObjectInfoFn: func(ctx context.Context, bucket, object string, opts ObjectOptions) (ObjectInfo, error) {
 			return newObjectLayerFn().GetObjectInfo(ctx, bucket, object, opts)
 		},
@@ -780,6 +865,21 @@ func newServerCacheObjects(ctx context.Context, config cache.Config) (CacheObjec
 		},
 		InnerCopyObjectFn: func(ctx context.Context, srcBucket, srcObject, destBucket, destObject string, srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (objInfo ObjectInfo, err error) {
 			return newObjectLayerFn().CopyObject(ctx, srcBucket, srcObject, destBucket, destObject, srcInfo, srcOpts, dstOpts)
+		},
+		InnerNewMultipartUploadFn: func(ctx context.Context, bucket, object string, opts ObjectOptions) (uploadID string, err error) {
+			return newObjectLayerFn().NewMultipartUpload(ctx, bucket, object, opts)
+		},
+		InnerPutObjectPartFn: func(ctx context.Context, bucket, object, uploadID string, partID int, data *PutObjReader, opts ObjectOptions) (info PartInfo, err error) {
+			return newObjectLayerFn().PutObjectPart(ctx, bucket, object, uploadID, partID, data, opts)
+		},
+		InnerAbortMultipartUploadFn: func(ctx context.Context, bucket, object, uploadID string, opts ObjectOptions) error {
+			return newObjectLayerFn().AbortMultipartUpload(ctx, bucket, object, uploadID, opts)
+		},
+		InnerCompleteMultipartUploadFn: func(ctx context.Context, bucket, object, uploadID string, uploadedParts []CompletePart, opts ObjectOptions) (objInfo ObjectInfo, err error) {
+			return newObjectLayerFn().CompleteMultipartUpload(ctx, bucket, object, uploadID, uploadedParts, opts)
+		},
+		InnerCopyObjectPartFn: func(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject, uploadID string, partID int, startOffset int64, length int64, srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (pi PartInfo, e error) {
+			return newObjectLayerFn().CopyObjectPart(ctx, srcBucket, srcObject, dstBucket, dstObject, uploadID, partID, startOffset, length, srcInfo, srcOpts, dstOpts)
 		},
 	}
 	c.cacheStats.GetDiskStats = func() []CacheDiskStats {
@@ -858,4 +958,248 @@ func (c *cacheObjects) queuePendingWriteback(ctx context.Context) {
 		next:
 		}
 	}
+}
+
+// NewMultipartUpload - Starts a new multipart upload operation to backend - if writethrough mode is enabled, starts caching the multipart.
+func (c *cacheObjects) NewMultipartUpload(ctx context.Context, bucket, object string, opts ObjectOptions) (uploadID string, err error) {
+	newMultipartUploadFn := c.InnerNewMultipartUploadFn
+	dcache, err := c.getCacheToLoc(ctx, bucket, object)
+	if err != nil {
+		// disk cache could not be located,execute backend call.
+		return newMultipartUploadFn(ctx, bucket, object, opts)
+	}
+	if c.skipCache() {
+		return newMultipartUploadFn(ctx, bucket, object, opts)
+	}
+
+	if opts.ServerSideEncryption != nil { // avoid caching encrypted objects
+		dcache.Delete(ctx, bucket, object)
+		return newMultipartUploadFn(ctx, bucket, object, opts)
+	}
+
+	// skip cache for objects with locks
+	objRetention := objectlock.GetObjectRetentionMeta(opts.UserDefined)
+	legalHold := objectlock.GetObjectLegalHoldMeta(opts.UserDefined)
+	if objRetention.Mode.Valid() || legalHold.Status.Valid() {
+		dcache.Delete(ctx, bucket, object)
+		return newMultipartUploadFn(ctx, bucket, object, opts)
+	}
+
+	// fetch from backend if cache exclude pattern or cache-control
+	// directive set to exclude
+	if c.isCacheExclude(bucket, object) {
+		dcache.Delete(ctx, bucket, object)
+		return newMultipartUploadFn(ctx, bucket, object, opts)
+	}
+	if !c.commitWritethrough && !c.commitWriteback {
+		return newMultipartUploadFn(ctx, bucket, object, opts)
+	}
+
+	// perform multipart upload on backend and cache simultaneously
+	uploadID, err = newMultipartUploadFn(ctx, bucket, object, opts)
+	dcache.NewMultipartUpload(GlobalContext, bucket, object, uploadID, opts)
+	return uploadID, err
+}
+
+// PutObjectPart streams part to cache concurrently if writethrough mode is enabled. Otherwise redirects the call to remote
+func (c *cacheObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *PutObjReader, opts ObjectOptions) (info PartInfo, err error) {
+	putObjectPartFn := c.InnerPutObjectPartFn
+	dcache, err := c.getCacheToLoc(ctx, bucket, object)
+	if err != nil {
+		// disk cache could not be located,execute backend call.
+		return putObjectPartFn(ctx, bucket, object, uploadID, partID, data, opts)
+	}
+
+	if !c.commitWritethrough && !c.commitWriteback {
+		return putObjectPartFn(ctx, bucket, object, uploadID, partID, data, opts)
+	}
+	if c.skipCache() {
+		return putObjectPartFn(ctx, bucket, object, uploadID, partID, data, opts)
+	}
+	size := data.Size()
+
+	// avoid caching part if space unavailable
+	if !dcache.diskSpaceAvailable(size) {
+		return putObjectPartFn(ctx, bucket, object, uploadID, partID, data, opts)
+	}
+
+	if opts.ServerSideEncryption != nil {
+		dcache.Delete(ctx, bucket, object)
+		return putObjectPartFn(ctx, bucket, object, uploadID, partID, data, opts)
+	}
+
+	// skip cache for objects with locks
+	objRetention := objectlock.GetObjectRetentionMeta(opts.UserDefined)
+	legalHold := objectlock.GetObjectLegalHoldMeta(opts.UserDefined)
+	if objRetention.Mode.Valid() || legalHold.Status.Valid() {
+		dcache.Delete(ctx, bucket, object)
+		return putObjectPartFn(ctx, bucket, object, uploadID, partID, data, opts)
+	}
+
+	// fetch from backend if cache exclude pattern or cache-control
+	// directive set to exclude
+	if c.isCacheExclude(bucket, object) {
+		dcache.Delete(ctx, bucket, object)
+		return putObjectPartFn(ctx, bucket, object, uploadID, partID, data, opts)
+	}
+
+	info = PartInfo{}
+	// Initialize pipe to stream data to backend
+	pipeReader, pipeWriter := io.Pipe()
+	hashReader, err := hash.NewReader(pipeReader, size, "", "", data.ActualSize())
+	if err != nil {
+		return
+	}
+	// Initialize pipe to stream data to cache
+	rPipe, wPipe := io.Pipe()
+	pinfoCh := make(chan PartInfo)
+	cinfoCh := make(chan PartInfo)
+
+	errorCh := make(chan error)
+	go func() {
+		info, err = putObjectPartFn(ctx, bucket, object, uploadID, partID, NewPutObjReader(hashReader), opts)
+		if err != nil {
+			close(pinfoCh)
+			pipeReader.CloseWithError(err)
+			rPipe.CloseWithError(err)
+			errorCh <- err
+			return
+		}
+		close(errorCh)
+		pinfoCh <- info
+	}()
+	go func() {
+		pinfo, perr := dcache.PutObjectPart(GlobalContext, bucket, object, uploadID, partID, rPipe, data.Size(), opts)
+		if perr != nil {
+			rPipe.CloseWithError(perr)
+			close(cinfoCh)
+			// clean up upload
+			dcache.AbortUpload(bucket, object, uploadID)
+			return
+		}
+		cinfoCh <- pinfo
+	}()
+
+	mwriter := cacheMultiWriter(pipeWriter, wPipe)
+	_, err = io.Copy(mwriter, data)
+	pipeWriter.Close()
+	wPipe.Close()
+
+	if err != nil {
+		err = <-errorCh
+		return PartInfo{}, err
+	}
+	info = <-pinfoCh
+	cachedInfo := <-cinfoCh
+	if info.PartNumber == cachedInfo.PartNumber {
+		cachedInfo.ETag = info.ETag
+		cachedInfo.LastModified = info.LastModified
+		dcache.SavePartMetadata(GlobalContext, bucket, object, uploadID, partID, cachedInfo)
+	}
+	return info, err
+}
+
+// CopyObjectPart behaves similar to PutObjectPart - caches part to upload dir if writethrough mode is enabled.
+func (c *cacheObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject, uploadID string, partID int, startOffset int64, length int64, srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (pi PartInfo, e error) {
+	copyObjectPartFn := c.InnerCopyObjectPartFn
+	dcache, err := c.getCacheToLoc(ctx, dstBucket, dstObject)
+	if err != nil {
+		// disk cache could not be located,execute backend call.
+		return copyObjectPartFn(ctx, srcBucket, srcObject, dstBucket, dstObject, uploadID, partID, startOffset, length, srcInfo, srcOpts, dstOpts)
+	}
+
+	if !c.commitWritethrough && !c.commitWriteback {
+		return copyObjectPartFn(ctx, srcBucket, srcObject, dstBucket, dstObject, uploadID, partID, startOffset, length, srcInfo, srcOpts, dstOpts)
+	}
+	if err := dcache.uploadIDExists(dstBucket, dstObject, uploadID); err != nil {
+		return copyObjectPartFn(ctx, srcBucket, srcObject, dstBucket, dstObject, uploadID, partID, startOffset, length, srcInfo, srcOpts, dstOpts)
+	}
+	partInfo, err := copyObjectPartFn(ctx, srcBucket, srcObject, dstBucket, dstObject, uploadID, partID, startOffset, length, srcInfo, srcOpts, dstOpts)
+	if err != nil {
+		return pi, toObjectErr(err, dstBucket, dstObject)
+	}
+	go func() {
+		isSuffixLength := false
+		if startOffset < 0 {
+			isSuffixLength = true
+		}
+
+		rs := &HTTPRangeSpec{
+			IsSuffixLength: isSuffixLength,
+			Start:          startOffset,
+			End:            startOffset + length,
+		}
+		// fill cache in the background
+		bReader, bErr := c.InnerGetObjectNInfoFn(GlobalContext, srcBucket, srcObject, rs, http.Header{}, readLock, ObjectOptions{})
+		if bErr != nil {
+			return
+		}
+		defer bReader.Close()
+		// avoid cache overwrite if another background routine filled cache
+		dcache.PutObjectPart(GlobalContext, dstBucket, dstObject, uploadID, partID, bReader, length, ObjectOptions{UserDefined: getMetadata(bReader.ObjInfo)})
+	}()
+	// Success.
+	return partInfo, nil
+}
+
+// CompleteMultipartUpload - completes multipart upload operation on the backend. If writethrough mode is enabled, this also
+// finalizes the upload saved in cache multipart dir.
+func (c *cacheObjects) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, uploadedParts []CompletePart, opts ObjectOptions) (oi ObjectInfo, err error) {
+	completeMultipartUploadFn := c.InnerCompleteMultipartUploadFn
+	if !c.commitWritethrough && !c.commitWriteback {
+		return completeMultipartUploadFn(ctx, bucket, object, uploadID, uploadedParts, opts)
+	}
+	dcache, err := c.getCacheToLoc(ctx, bucket, object)
+	if err != nil {
+		// disk cache could not be located,execute backend call.
+		return completeMultipartUploadFn(ctx, bucket, object, uploadID, uploadedParts, opts)
+	}
+
+	// perform multipart upload on backend and cache simultaneously
+	oi, err = completeMultipartUploadFn(ctx, bucket, object, uploadID, uploadedParts, opts)
+	if err == nil {
+		// fill cache in the background
+		go func() {
+			_, err := dcache.CompleteMultipartUpload(bgContext(ctx), bucket, object, uploadID, uploadedParts, oi, opts)
+			if err != nil {
+				// fill cache in the background
+				bReader, bErr := c.InnerGetObjectNInfoFn(GlobalContext, bucket, object, nil, http.Header{}, readLock, ObjectOptions{})
+				if bErr != nil {
+					return
+				}
+				defer bReader.Close()
+				oi, _, err := dcache.Stat(GlobalContext, bucket, object)
+				// avoid cache overwrite if another background routine filled cache
+				if err != nil || oi.ETag != bReader.ObjInfo.ETag {
+					dcache.Put(GlobalContext, bucket, object, bReader, bReader.ObjInfo.Size, nil, ObjectOptions{UserDefined: getMetadata(bReader.ObjInfo)}, false, false)
+				}
+			}
+		}()
+	}
+	return
+}
+
+// AbortMultipartUpload - aborts multipart upload on backend and cache.
+func (c *cacheObjects) AbortMultipartUpload(ctx context.Context, bucket, object, uploadID string, opts ObjectOptions) error {
+	abortMultipartUploadFn := c.InnerAbortMultipartUploadFn
+	if !c.commitWritethrough && !c.commitWriteback {
+		return abortMultipartUploadFn(ctx, bucket, object, uploadID, opts)
+	}
+	dcache, err := c.getCacheToLoc(ctx, bucket, object)
+	if err != nil {
+		// disk cache could not be located,execute backend call.
+		return abortMultipartUploadFn(ctx, bucket, object, uploadID, opts)
+	}
+	if err = dcache.uploadIDExists(bucket, object, uploadID); err != nil {
+		return toObjectErr(err, bucket, object, uploadID)
+	}
+
+	// execute backend operation
+	err = abortMultipartUploadFn(ctx, bucket, object, uploadID, opts)
+	if err != nil {
+		return err
+	}
+	// abort multipart upload on cache
+	go dcache.AbortUpload(bucket, object, uploadID)
+	return nil
 }

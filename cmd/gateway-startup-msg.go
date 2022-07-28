@@ -21,12 +21,19 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/minio/minio/pkg/color"
+	"github.com/minio/minio/internal/color"
+	"github.com/minio/minio/internal/logger"
 )
 
 // Prints the formatted startup message.
 func printGatewayStartupMessage(apiEndPoints []string, backendType string) {
-	strippedAPIEndpoints := stripStandardPorts(apiEndPoints)
+	if len(globalSubnetConfig.APIKey) == 0 {
+		var builder strings.Builder
+		startupBanner(&builder)
+		logger.Info("\n" + builder.String())
+	}
+
+	strippedAPIEndpoints := stripStandardPorts(apiEndPoints, globalMinioHost)
 	// If cache layer is enabled, print cache capacity.
 	cacheAPI := newCachedObjectLayerFn()
 	if cacheAPI != nil {
@@ -41,14 +48,6 @@ func printGatewayStartupMessage(apiEndPoints []string, backendType string) {
 
 	// Prints documentation message.
 	printObjectAPIMsg()
-
-	// SSL is configured reads certification chain, prints
-	// authority and expiry.
-	if color.IsTerminal() && !globalCLIContext.Anonymous {
-		if globalIsTLS {
-			printCertificateMsg(globalPublicCerts)
-		}
-	}
 }
 
 // Prints common server startup message. Prints credential, region and browser access.
@@ -59,15 +58,19 @@ func printGatewayCommonMsg(apiEndpoints []string) {
 	apiEndpointStr := strings.Join(apiEndpoints, "  ")
 
 	// Colorize the message and print.
-	logStartupMessage(color.Blue("Endpoint: ") + color.Bold(fmt.Sprintf("%s ", apiEndpointStr)))
+	logger.Info(color.Blue("API: ") + color.Bold(fmt.Sprintf("%s ", apiEndpointStr)))
 	if color.IsTerminal() && !globalCLIContext.Anonymous {
-		logStartupMessage(color.Blue("RootUser: ") + color.Bold(fmt.Sprintf("%s ", cred.AccessKey)))
-		logStartupMessage(color.Blue("RootPass: ") + color.Bold(fmt.Sprintf("%s ", cred.SecretKey)))
+		logger.Info(color.Blue("RootUser: ") + color.Bold(fmt.Sprintf("%s ", cred.AccessKey)))
+		logger.Info(color.Blue("RootPass: ") + color.Bold(fmt.Sprintf("%s ", cred.SecretKey)))
 	}
 	printEventNotifiers()
 
 	if globalBrowserEnabled {
-		logStartupMessage(color.Blue("\nBrowser Access:"))
-		logStartupMessage(fmt.Sprintf(getFormatStr(len(apiEndpointStr), 3), apiEndpointStr))
+		consoleEndpointStr := strings.Join(stripStandardPorts(getConsoleEndpoints(), globalMinioConsoleHost), " ")
+		logger.Info(color.Blue("\nConsole: ") + color.Bold(fmt.Sprintf("%s ", consoleEndpointStr)))
+		if color.IsTerminal() && !globalCLIContext.Anonymous {
+			logger.Info(color.Blue("RootUser: ") + color.Bold(fmt.Sprintf("%s ", cred.AccessKey)))
+			logger.Info(color.Blue("RootPass: ") + color.Bold(fmt.Sprintf("%s ", cred.SecretKey)))
+		}
 	}
 }

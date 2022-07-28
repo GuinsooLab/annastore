@@ -26,9 +26,9 @@ import (
 	"path"
 	"time"
 
-	"github.com/minio/minio/cmd/config"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/lock"
+	"github.com/minio/minio/internal/config"
+	"github.com/minio/minio/internal/lock"
+	"github.com/minio/minio/internal/logger"
 )
 
 // FS format version strings.
@@ -113,7 +113,7 @@ func formatFSMigrateV1ToV2(ctx context.Context, wlk *lock.LockedFile, fsPath str
 		return err
 	}
 
-	if err = os.MkdirAll(path.Join(fsPath, minioMetaMultipartBucket), 0755); err != nil {
+	if err = os.MkdirAll(path.Join(fsPath, minioMetaMultipartBucket), 0o755); err != nil {
 		return err
 	}
 
@@ -165,7 +165,7 @@ func formatFSMigrate(ctx context.Context, wlk *lock.LockedFile, fsPath string) e
 func createFormatFS(fsFormatPath string) error {
 	// Attempt a write lock on formatConfigFile `format.json`
 	// file stored in minioMetaBucket(.minio.sys) directory.
-	lk, err := lock.TryLockedOpenFile(fsFormatPath, os.O_RDWR|os.O_CREATE, 0600)
+	lk, err := lock.TryLockedOpenFile(fsFormatPath, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return err
 	}
@@ -239,6 +239,9 @@ func initFormatFS(ctx context.Context, fsPath string) (rlk *lock.RLockedFile, er
 		formatBackend, err := formatMetaGetFormatBackendFS(rlk)
 		if err != nil {
 			return nil, err
+		}
+		if formatBackend == formatBackendErasureSingle {
+			return nil, errFreshDisk
 		}
 		if formatBackend != formatBackendFS {
 			return nil, fmt.Errorf(`%s file: expected format-type: %s, found: %s`, formatConfigFile, formatBackendFS, formatBackend)
@@ -318,6 +321,10 @@ func formatFSFixDeploymentID(ctx context.Context, fsFormatPath string) error {
 	if err != nil {
 		rlk.Close()
 		return err
+	}
+	if formatBackend == formatBackendErasureSingle {
+		rlk.Close()
+		return errFreshDisk
 	}
 	if formatBackend != formatBackendFS {
 		rlk.Close()

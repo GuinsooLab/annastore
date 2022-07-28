@@ -21,17 +21,22 @@ import (
 	"archive/tar"
 	"bufio"
 	"bytes"
-	"compress/bzip2"
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path"
+	"runtime"
 
+	"github.com/cosnicolaou/pbzip2"
 	"github.com/klauspost/compress/s2"
 	"github.com/klauspost/compress/zstd"
 	gzip "github.com/klauspost/pgzip"
 	"github.com/pierrec/lz4"
 )
+
+// Max bzip2 concurrency across calls. 50% of GOMAXPROCS.
+var bz2Limiter = pbzip2.CreateConcurrencyPool((runtime.GOMAXPROCS(0) + 1) / 2)
 
 func detect(r *bufio.Reader) format {
 	z, err := r.Peek(4)
@@ -92,7 +97,7 @@ var magicHeaders = []struct {
 	},
 }
 
-func untar(r io.Reader, putObject func(reader io.Reader, info os.FileInfo, name string)) error {
+func untar(r io.Reader, putObject func(reader io.Reader, info os.FileInfo, name string) error) error {
 	bf := bufio.NewReader(r)
 	switch f := detect(bf); f {
 	case formatGzip:
@@ -112,7 +117,11 @@ func untar(r io.Reader, putObject func(reader io.Reader, info os.FileInfo, name 
 		defer dec.Close()
 		r = dec
 	case formatBZ2:
-		r = bzip2.NewReader(bf)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		r = pbzip2.NewReader(ctx, bf, pbzip2.DecompressionOptions(
+			pbzip2.BZConcurrency((runtime.GOMAXPROCS(0)+1)/2),
+			pbzip2.BZConcurrencyPool(bz2Limiter)))
 	case formatLZ4:
 		r = lz4.NewReader(bf)
 	case formatUnknown:
@@ -121,6 +130,7 @@ func untar(r io.Reader, putObject func(reader io.Reader, info os.FileInfo, name 
 		return fmt.Errorf("Unsupported format %s", f)
 	}
 	tarReader := tar.NewReader(r)
+	n := 0
 	for {
 		header, err := tarReader.Next()
 
@@ -132,7 +142,11 @@ func untar(r io.Reader, putObject func(reader io.Reader, info os.FileInfo, name 
 
 		// return any other error
 		case err != nil:
-			return err
+			extra := ""
+			if n > 0 {
+				extra = fmt.Sprintf(" after %d successful object(s)", n)
+			}
+			return fmt.Errorf("tar file error: %w%s", err, extra)
 
 		// if the header is nil, just skip it (not sure how this happens)
 		case header == nil:
@@ -146,9 +160,15 @@ func untar(r io.Reader, putObject func(reader io.Reader, info os.FileInfo, name 
 
 		switch header.Typeflag {
 		case tar.TypeDir: // = directory
-			putObject(tarReader, header.FileInfo(), trimLeadingSlash(pathJoin(name, slashSeparator)))
+			if err := putObject(tarReader, header.FileInfo(), trimLeadingSlash(pathJoin(name, slashSeparator))); err != nil {
+				return err
+			}
+			n++
 		case tar.TypeReg, tar.TypeChar, tar.TypeBlock, tar.TypeFifo, tar.TypeGNUSparse: // = regular
-			putObject(tarReader, header.FileInfo(), trimLeadingSlash(path.Clean(name)))
+			if err := putObject(tarReader, header.FileInfo(), trimLeadingSlash(path.Clean(name))); err != nil {
+				return err
+			}
+			n++
 		default:
 			// ignore symlink'ed
 			continue

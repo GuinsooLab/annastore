@@ -33,12 +33,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/env"
-	xnet "github.com/minio/minio/pkg/net"
+	xhttp "github.com/minio/minio/internal/http"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/pkg/env"
+	xnet "github.com/minio/pkg/net"
 	"github.com/minio/selfupdate"
 )
 
@@ -51,10 +52,8 @@ const (
 	updateTimeout     = 10 * time.Second
 )
 
-var (
-	// For windows our files have .exe additionally.
-	minioReleaseWindowsInfoURL = minioReleaseURL + "minio.exe.sha256sum"
-)
+// For windows our files have .exe additionally.
+var minioReleaseWindowsInfoURL = minioReleaseURL + "minio.exe.sha256sum"
 
 // minioVersionToReleaseTime - parses a standard official release
 // MinIO version string.
@@ -77,7 +76,7 @@ func releaseTimeToReleaseTag(releaseTime time.Time) string {
 // releaseTagToReleaseTime - reverse of `releaseTimeToReleaseTag()`
 func releaseTagToReleaseTime(releaseTag string) (releaseTime time.Time, err error) {
 	fields := strings.Split(releaseTag, ".")
-	if len(fields) < 2 || len(fields) > 3 {
+	if len(fields) < 2 || len(fields) > 4 {
 		return releaseTime, fmt.Errorf("%s is not a valid release tag", releaseTag)
 	}
 	if fields[0] != "RELEASE" {
@@ -96,7 +95,7 @@ func getModTime(path string) (t time.Time, err error) {
 
 	// Version is minio non-standard, we will use minio binary's
 	// ModTime as release time.
-	fi, err := os.Stat(absPath)
+	fi, err := Stat(absPath)
 	if err != nil {
 		return t, fmt.Errorf("Unable to get ModTime of %s. %w", absPath, err)
 	}
@@ -126,7 +125,7 @@ func GetCurrentReleaseTime() (releaseTime time.Time, err error) {
 //     "/.dockerenv":      "file",
 //
 func IsDocker() bool {
-	if env.Get("MINIO_CI_CD", "") == "" {
+	if !globalIsCICD {
 		_, err := os.Stat("/.dockerenv")
 		if osIsNotExist(err) {
 			return false
@@ -142,7 +141,7 @@ func IsDocker() bool {
 
 // IsDCOS returns true if minio is running in DCOS.
 func IsDCOS() bool {
-	if env.Get("MINIO_CI_CD", "") == "" {
+	if !globalIsCICD {
 		// http://mesos.apache.org/documentation/latest/docker-containerizer/
 		// Mesos docker containerizer sets this value
 		return env.Get("MESOS_CONTAINER_NAME", "") != ""
@@ -150,14 +149,9 @@ func IsDCOS() bool {
 	return false
 }
 
-// IsKubernetesReplicaSet returns true if minio is running in kubernetes replica set.
-func IsKubernetesReplicaSet() bool {
-	return IsKubernetes() && (env.Get("KUBERNETES_REPLICA_SET", "") != "")
-}
-
 // IsKubernetes returns true if minio is running in kubernetes.
 func IsKubernetes() bool {
-	if env.Get("MINIO_CI_CD", "") == "" {
+	if !globalIsCICD {
 		// Kubernetes env used to validate if we are
 		// indeed running inside a kubernetes pod
 		// is KUBERNETES_SERVICE_HOST
@@ -230,7 +224,6 @@ func IsPCFTile() bool {
 // Any change here should be discussed by opening an issue at
 // https://github.com/minio/minio/issues.
 func getUserAgent(mode string) string {
-
 	userAgentParts := []string{}
 	// Helper function to concisely append a pair of strings to a
 	// the user-agent slice.
@@ -425,7 +418,8 @@ func getUpdateTransport(timeout time.Duration) http.RoundTripper {
 		TLSHandshakeTimeout:   timeout,
 		ExpectContinueTimeout: timeout,
 		TLSClientConfig: &tls.Config{
-			RootCAs: globalRootCAs,
+			RootCAs:            globalRootCAs,
+			ClientSessionCache: tls.NewLRUClientSessionCache(tlsClientSessionCacheSize),
 		},
 		DisableCompression: true,
 	}
@@ -466,7 +460,7 @@ func getDownloadURL(releaseTag string) (downloadURL string) {
 	// Check if we are docker environment, return docker update command
 	if IsDocker() {
 		// Construct release tag name.
-		return fmt.Sprintf("docker pull minio/minio:%s", releaseTag)
+		return fmt.Sprintf("podman pull quay.io/minio/minio:%s", releaseTag)
 	}
 
 	// For binary only installations, we return link to the latest binary.
@@ -522,7 +516,14 @@ func getUpdateReaderFromURL(u *url.URL, transport http.RoundTripper, mode string
 	return resp.Body, nil
 }
 
-func doUpdate(u *url.URL, lrTime time.Time, sha256Sum []byte, releaseInfo string, mode string) (err error) {
+var updateInProgress uint32
+
+func downloadBinary(u *url.URL, sha256Sum []byte, releaseInfo string, mode string) (err error) {
+	if !atomic.CompareAndSwapUint32(&updateInProgress, 0, 1) {
+		return errors.New("update already in progress")
+	}
+	defer atomic.StoreUint32(&updateInProgress, 0)
+
 	transport := getUpdateTransport(30 * time.Second)
 	var reader io.ReadCloser
 	if u.Scheme == "https" || u.Scheme == "http" {
@@ -542,6 +543,14 @@ func doUpdate(u *url.URL, lrTime time.Time, sha256Sum []byte, releaseInfo string
 		Checksum: sha256Sum,
 	}
 
+	if err := opts.CheckPermissions(); err != nil {
+		return AdminError{
+			Code:       AdminUpdateApplyFailure,
+			Message:    fmt.Sprintf("server update failed with: %s, do not restart the servers yet", err),
+			StatusCode: http.StatusInternalServerError,
+		}
+	}
+
 	minisignPubkey := env.Get(envMinisignPubKey, "")
 	if minisignPubkey != "" {
 		v := selfupdate.NewVerifier()
@@ -556,7 +565,35 @@ func doUpdate(u *url.URL, lrTime time.Time, sha256Sum []byte, releaseInfo string
 		opts.Verifier = v
 	}
 
-	if err = selfupdate.Apply(reader, opts); err != nil {
+	if err = selfupdate.PrepareAndCheckBinary(reader, opts); err != nil {
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) {
+			return AdminError{
+				Code: AdminUpdateApplyFailure,
+				Message: fmt.Sprintf("Unable to update the binary at %s: %v",
+					filepath.Dir(pathErr.Path), pathErr.Err),
+				StatusCode: http.StatusForbidden,
+			}
+		}
+		return AdminError{
+			Code:       AdminUpdateApplyFailure,
+			Message:    err.Error(),
+			StatusCode: http.StatusInternalServerError,
+		}
+	}
+
+	return nil
+}
+
+func commitBinary() (err error) {
+	if !atomic.CompareAndSwapUint32(&updateInProgress, 0, 1) {
+		return errors.New("update already in progress")
+	}
+	defer atomic.StoreUint32(&updateInProgress, 0)
+
+	opts := selfupdate.Options{}
+
+	if err = selfupdate.CommitBinary(opts); err != nil {
 		if rerr := selfupdate.RollbackError(err); rerr != nil {
 			return AdminError{
 				Code:       AdminUpdateApplyFailure,

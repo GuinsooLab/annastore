@@ -27,10 +27,10 @@ import (
 
 	jsoniter "github.com/json-iterator/go"
 	miniogopolicy "github.com/minio/minio-go/v7/pkg/policy"
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/bucket/policy"
-	"github.com/minio/minio/pkg/handlers"
+	"github.com/minio/minio/internal/handlers"
+	xhttp "github.com/minio/minio/internal/http"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/pkg/bucket/policy"
 )
 
 // PolicySys - policy subsystem.
@@ -38,7 +38,8 @@ type PolicySys struct{}
 
 // Get returns stored bucket policy
 func (sys *PolicySys) Get(bucket string) (*policy.Policy, error) {
-	return globalBucketMetadataSys.GetPolicyConfig(bucket)
+	policy, _, err := globalBucketMetadataSys.GetPolicyConfig(bucket)
+	return policy, err
 }
 
 // IsAllowed - checks given policy args is allowed to continue the Rest API.
@@ -77,10 +78,10 @@ func getConditionValues(r *http.Request, lc string, username string, claims map[
 		}
 	}
 
-	vid := r.URL.Query().Get("versionId")
+	vid := r.Form.Get(xhttp.VersionID)
 	if vid == "" {
 		if u, err := url.Parse(r.Header.Get(xhttp.AmzCopySource)); err == nil {
-			vid = u.Query().Get("versionId")
+			vid = u.Query().Get(xhttp.VersionID)
 		}
 	}
 
@@ -143,8 +144,8 @@ func getConditionValues(r *http.Request, lc string, username string, claims map[
 		}
 	}
 
-	var cloneURLValues = url.Values{}
-	for k, v := range r.URL.Query() {
+	cloneURLValues := make(url.Values, len(r.Form))
+	for k, v := range r.Form {
 		cloneURLValues[k] = v
 	}
 
@@ -172,9 +173,12 @@ func getConditionValues(r *http.Request, lc string, username string, claims map[
 		vStr, ok := v.(string)
 		if ok {
 			// Special case for AD/LDAP STS users
-			if k == ldapUser {
+			switch k {
+			case ldapUser:
 				args["user"] = []string{vStr}
-			} else {
+			case ldapUserN:
+				args["username"] = []string{vStr}
+			default:
 				args[k] = []string{vStr}
 			}
 		}
@@ -197,7 +201,7 @@ func PolicyToBucketAccessPolicy(bucketPolicy *policy.Policy) (*miniogopolicy.Buc
 	}
 
 	var policyInfo miniogopolicy.BucketAccessPolicy
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	if err = json.Unmarshal(data, &policyInfo); err != nil {
 		// This should not happen because data is valid to JSON data.
 		return nil, err
@@ -215,7 +219,7 @@ func BucketAccessPolicyToPolicy(policyInfo *miniogopolicy.BucketAccessPolicy) (*
 	}
 
 	var bucketPolicy policy.Policy
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	if err = json.Unmarshal(data, &bucketPolicy); err != nil {
 		// This should not happen because data is valid to JSON data.
 		return nil, err

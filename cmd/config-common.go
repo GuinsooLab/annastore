@@ -24,32 +24,36 @@ import (
 	"io/ioutil"
 	"net/http"
 
-	"github.com/minio/minio/pkg/hash"
+	"github.com/minio/minio/internal/hash"
 )
 
 var errConfigNotFound = errors.New("config file not found")
 
-func readConfig(ctx context.Context, objAPI ObjectLayer, configFile string) ([]byte, error) {
-	// Read entire content by setting size to -1
-	r, err := objAPI.GetObjectNInfo(ctx, minioMetaBucket, configFile, nil, http.Header{}, readLock, ObjectOptions{})
+func readConfigWithMetadata(ctx context.Context, store objectIO, configFile string) ([]byte, ObjectInfo, error) {
+	r, err := store.GetObjectNInfo(ctx, minioMetaBucket, configFile, nil, http.Header{}, readLock, ObjectOptions{})
 	if err != nil {
 		// Treat object not found as config not found.
 		if isErrObjectNotFound(err) {
-			return nil, errConfigNotFound
+			return nil, ObjectInfo{}, errConfigNotFound
 		}
 
-		return nil, err
+		return nil, ObjectInfo{}, err
 	}
 	defer r.Close()
 
 	buf, err := ioutil.ReadAll(r)
 	if err != nil {
-		return nil, err
+		return nil, ObjectInfo{}, err
 	}
 	if len(buf) == 0 {
-		return nil, errConfigNotFound
+		return nil, ObjectInfo{}, errConfigNotFound
 	}
-	return buf, nil
+	return buf, r.ObjInfo, nil
+}
+
+func readConfig(ctx context.Context, store objectIO, configFile string) ([]byte, error) {
+	buf, _, err := readConfigWithMetadata(ctx, store, configFile)
+	return buf, err
 }
 
 type objectDeleter interface {
@@ -57,20 +61,22 @@ type objectDeleter interface {
 }
 
 func deleteConfig(ctx context.Context, objAPI objectDeleter, configFile string) error {
-	_, err := objAPI.DeleteObject(ctx, minioMetaBucket, configFile, ObjectOptions{})
+	_, err := objAPI.DeleteObject(ctx, minioMetaBucket, configFile, ObjectOptions{
+		DeletePrefix: true,
+	})
 	if err != nil && isErrObjectNotFound(err) {
 		return errConfigNotFound
 	}
 	return err
 }
 
-func saveConfig(ctx context.Context, objAPI ObjectLayer, configFile string, data []byte) error {
+func saveConfig(ctx context.Context, store objectIO, configFile string, data []byte) error {
 	hashReader, err := hash.NewReader(bytes.NewReader(data), int64(len(data)), "", getSHA256Hash(data), int64(len(data)))
 	if err != nil {
 		return err
 	}
 
-	_, err = objAPI.PutObject(ctx, minioMetaBucket, configFile, NewPutObjReader(hashReader), ObjectOptions{MaxParity: true})
+	_, err = store.PutObject(ctx, minioMetaBucket, configFile, NewPutObjReader(hashReader), ObjectOptions{MaxParity: true})
 	return err
 }
 

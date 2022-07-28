@@ -22,6 +22,8 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	"github.com/minio/madmin-go"
 )
 
 // naughtyDisk wraps a POSIX disk and returns programmed errors
@@ -110,8 +112,8 @@ func (d *naughtyDisk) SetDiskID(id string) {
 	d.disk.SetDiskID(id)
 }
 
-func (d *naughtyDisk) NSScanner(ctx context.Context, cache dataUsageCache, updates chan<- dataUsageEntry) (info dataUsageCache, err error) {
-	return d.disk.NSScanner(ctx, cache, updates)
+func (d *naughtyDisk) NSScanner(ctx context.Context, cache dataUsageCache, updates chan<- dataUsageEntry, scanMode madmin.HealScanMode) (info dataUsageCache, err error) {
+	return d.disk.NSScanner(ctx, cache, updates, scanMode)
 }
 
 func (d *naughtyDisk) DiskInfo(ctx context.Context) (info DiskInfo, err error) {
@@ -148,6 +150,7 @@ func (d *naughtyDisk) StatVol(ctx context.Context, volume string) (vol VolInfo, 
 	}
 	return d.disk.StatVol(ctx, volume)
 }
+
 func (d *naughtyDisk) DeleteVol(ctx context.Context, volume string, forceDelete bool) (err error) {
 	if err := d.calcError(); err != nil {
 		return err
@@ -218,21 +221,14 @@ func (d *naughtyDisk) CheckParts(ctx context.Context, volume string, path string
 	return d.disk.CheckParts(ctx, volume, path, fi)
 }
 
-func (d *naughtyDisk) CheckFile(ctx context.Context, volume string, path string) (err error) {
+func (d *naughtyDisk) Delete(ctx context.Context, volume string, path string, deleteOpts DeleteOptions) (err error) {
 	if err := d.calcError(); err != nil {
 		return err
 	}
-	return d.disk.CheckFile(ctx, volume, path)
+	return d.disk.Delete(ctx, volume, path, deleteOpts)
 }
 
-func (d *naughtyDisk) Delete(ctx context.Context, volume string, path string, recursive bool) (err error) {
-	if err := d.calcError(); err != nil {
-		return err
-	}
-	return d.disk.Delete(ctx, volume, path, recursive)
-}
-
-func (d *naughtyDisk) DeleteVersions(ctx context.Context, volume string, versions []FileInfo) []error {
+func (d *naughtyDisk) DeleteVersions(ctx context.Context, volume string, versions []FileInfoVersions) []error {
 	if err := d.calcError(); err != nil {
 		errs := make([]error, len(versions))
 		for i := range errs {
@@ -285,9 +281,31 @@ func (d *naughtyDisk) ReadAll(ctx context.Context, volume string, path string) (
 	return d.disk.ReadAll(ctx, volume, path)
 }
 
+func (d *naughtyDisk) ReadXL(ctx context.Context, volume string, path string, readData bool) (rf RawFileInfo, err error) {
+	if err := d.calcError(); err != nil {
+		return rf, err
+	}
+	return d.disk.ReadXL(ctx, volume, path, readData)
+}
+
 func (d *naughtyDisk) VerifyFile(ctx context.Context, volume, path string, fi FileInfo) error {
 	if err := d.calcError(); err != nil {
 		return err
 	}
 	return d.disk.VerifyFile(ctx, volume, path, fi)
+}
+
+func (d *naughtyDisk) StatInfoFile(ctx context.Context, volume, path string, glob bool) (stat []StatInfo, err error) {
+	if err := d.calcError(); err != nil {
+		return stat, err
+	}
+	return d.disk.StatInfoFile(ctx, volume, path, glob)
+}
+
+func (d *naughtyDisk) ReadMultiple(ctx context.Context, req ReadMultipleReq, resp chan<- ReadMultipleResp) error {
+	if err := d.calcError(); err != nil {
+		close(resp)
+		return err
+	}
+	return d.disk.ReadMultiple(ctx, req, resp)
 }

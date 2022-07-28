@@ -1,15 +1,32 @@
-## MinIO Healthcheck
+# MinIO Healthcheck
 
 MinIO server exposes three un-authenticated, healthcheck endpoints liveness probe and a cluster probe at `/minio/health/live` and `/minio/health/cluster` respectively.
 
-### Liveness probe
+## Liveness probe
 
-This probe always responds with '200 OK'. When liveness probe fails, Kubernetes like platforms restart the container.
+This probe always responds with '200 OK'. Only fails if 'etcd' is configured and unreachable. This behavior is specific to gateway. When liveness probe fails, Kubernetes like platforms restart the container.
 
 ```
 livenessProbe:
   httpGet:
     path: /minio/health/live
+    port: 9000
+    scheme: HTTP
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  timeoutSeconds: 10
+  successThreshold: 1
+  failureThreshold: 3
+```
+
+## Readiness probe
+
+This probe always responds with '200 OK'. Only fails if 'etcd' is configured and unreachable. This behavior is specific to gateway. When readiness probe fails, Kubernetes like platforms turn-off routing to the container.
+
+```
+readinessProbe:
+  httpGet:
+    path: /minio/health/ready
     port: 9000
     scheme: HTTP
   initialDelaySeconds: 120
@@ -19,9 +36,11 @@ livenessProbe:
   failureThreshold: 3
 ```
 
-### Cluster probe
-#### Cluster-writeable probe
-This probe is not useful in almost all cases, this is meant for administrators to see if write quorum is available in any given cluster. The reply is '200 OK' if cluster has write quorum if not it returns '503 Service Unavailable'.
+## Cluster probe
+
+### Cluster-writeable probe
+
+The reply is '200 OK' if cluster has write quorum if not it returns '503 Service Unavailable'.
 
 ```
 curl http://minio1:9001/minio/health/cluster
@@ -38,8 +57,9 @@ X-Xss-Protection: 1; mode=block
 Date: Tue, 21 Jul 2020 00:36:14 GMT
 ```
 
-#### Clustr-readable probe
-This probe is not useful in almost all cases, this is meant for administrators to see if read quorum is available in any given cluster. The reply is '200 OK' if cluster has read quorum if not it returns '503 Service Unavailable'.
+### Cluster-readable probe
+
+The reply is '200 OK' if cluster has read quorum if not it returns '503 Service Unavailable'.
 
 ```
 curl http://minio1:9001/minio/health/cluster/read
@@ -56,7 +76,8 @@ X-Xss-Protection: 1; mode=block
 Date: Tue, 21 Jul 2020 00:36:14 GMT
 ```
 
-#### Checking cluster health for maintenance
+### Checking cluster health for maintenance
+
 You may query the cluster probe endpoint to check if the node which received the request can be taken down for maintenance, if the server replies back '412 Precondition Failed' this means you will lose HA. '200 OK' means you are okay to proceed.
 
 ```

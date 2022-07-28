@@ -156,9 +156,9 @@ func TestGetHostIP(t *testing.T) {
 
 // Tests finalize api endpoints.
 func TestGetAPIEndpoints(t *testing.T) {
-	host, port := globalMinioHost, globalMinioAddr
+	host, port := globalMinioHost, globalMinioPort
 	defer func() {
-		globalMinioHost, globalMinioAddr = host, port
+		globalMinioHost, globalMinioPort = host, port
 	}()
 	testCases := []struct {
 		host, port     string
@@ -342,6 +342,7 @@ func TestSameLocalAddrs(t *testing.T) {
 		})
 	}
 }
+
 func TestIsHostIP(t *testing.T) {
 	testCases := []struct {
 		args           string

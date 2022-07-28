@@ -29,9 +29,9 @@ import (
 	"strconv"
 	"strings"
 
-	xhttp "github.com/minio/minio/cmd/http"
+	xhttp "github.com/minio/minio/internal/http"
 
-	"github.com/minio/minio/pkg/auth"
+	"github.com/minio/minio/internal/auth"
 )
 
 // Whitelist resource list that will be used in query string for signature-V2 calculation.
@@ -78,7 +78,9 @@ const (
 // http://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAuthentication.html#RESTAuthenticationStringToSign
 func doesPolicySignatureV2Match(formValues http.Header) (auth.Credentials, APIErrorCode) {
 	accessKey := formValues.Get(xhttp.AmzAccessKeyID)
-	cred, _, s3Err := checkKeyValid(accessKey)
+
+	r := &http.Request{Header: formValues}
+	cred, _, s3Err := checkKeyValid(r, accessKey)
 	if s3Err != ErrNone {
 		return cred, s3Err
 	}
@@ -153,7 +155,7 @@ func doesPresignV2SignatureMatch(r *http.Request) APIErrorCode {
 		return ErrInvalidQueryParams
 	}
 
-	cred, _, s3Err := checkKeyValid(accessKey)
+	cred, _, s3Err := checkKeyValid(r, accessKey)
 	if s3Err != ErrNone {
 		return s3Err
 	}
@@ -179,12 +181,14 @@ func doesPresignV2SignatureMatch(r *http.Request) APIErrorCode {
 		return ErrSignatureDoesNotMatch
 	}
 
+	r.Form.Del(xhttp.Expires)
+
 	return ErrNone
 }
 
 func getReqAccessKeyV2(r *http.Request) (auth.Credentials, bool, APIErrorCode) {
-	if accessKey := r.URL.Query().Get(xhttp.AmzAccessKeyID); accessKey != "" {
-		return checkKeyValid(accessKey)
+	if accessKey := r.Form.Get(xhttp.AmzAccessKeyID); accessKey != "" {
+		return checkKeyValid(r, accessKey)
 	}
 
 	// below is V2 Signed Auth header format, splitting on `space` (after the `AWS` string).
@@ -200,7 +204,7 @@ func getReqAccessKeyV2(r *http.Request) (auth.Credentials, bool, APIErrorCode) {
 		return auth.Credentials{}, false, ErrMissingFields
 	}
 
-	return checkKeyValid(keySignFields[0])
+	return checkKeyValid(r, keySignFields[0])
 }
 
 // Authorization = "AWS" + " " + AWSAccessKeyId + ":" + Signature;

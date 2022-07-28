@@ -18,14 +18,15 @@
 package cmd
 
 import (
+	"encoding/base64"
 	"io"
 	"math"
 	"time"
 
 	humanize "github.com/dustin/go-humanize"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/pkg/bucket/replication"
-	"github.com/minio/minio/pkg/hash"
+	"github.com/minio/minio/internal/bucket/replication"
+	"github.com/minio/minio/internal/hash"
 )
 
 // BackendType - represents different backend types.
@@ -77,6 +78,7 @@ type BucketInfo struct {
 
 	// Date and time when the bucket was created.
 	Created time.Time
+	Deleted time.Time
 }
 
 // ObjectInfo - represents object metadata.
@@ -113,12 +115,8 @@ type ObjectInfo struct {
 	// to a delete marker on an object.
 	DeleteMarker bool
 
-	// TransitionStatus indicates if transition is complete/pending
-	TransitionStatus string
-	// Name of transitioned object on remote tier
-	transitionedObjName string
-	// Name of remote tier object has transitioned to
-	TransitionTier string
+	// Transitioned object information
+	TransitionedObject TransitionedObject
 
 	// RestoreExpires indicates date a restored object expires
 	RestoreExpires time.Time
@@ -145,7 +143,8 @@ type ObjectInfo struct {
 	// Specify object storage class
 	StorageClass string
 
-	ReplicationStatus replication.StatusType
+	ReplicationStatusInternal string
+	ReplicationStatus         replication.StatusType
 	// User-Defined metadata
 	UserDefined map[string]string
 
@@ -171,8 +170,9 @@ type ObjectInfo struct {
 
 	// backendType indicates which backend filled this structure
 	backendType BackendType
-
-	VersionPurgeStatus VersionPurgeStatusType
+	// internal representation of version purge status
+	VersionPurgeStatusInternal string
+	VersionPurgeStatus         VersionPurgeStatusType
 
 	// The total count of all versions of this object
 	NumVersions int
@@ -180,43 +180,65 @@ type ObjectInfo struct {
 	SuccessorModTime time.Time
 }
 
+// ArchiveInfo returns any saved zip archive meta information
+func (o ObjectInfo) ArchiveInfo() []byte {
+	if len(o.UserDefined) == 0 {
+		return nil
+	}
+	z, ok := o.UserDefined[archiveInfoMetadataKey]
+	if !ok {
+		return nil
+	}
+	if len(z) > 0 && z[0] >= 32 {
+		// FS/gateway mode does base64 encoding on roundtrip.
+		// zipindex has version as first byte, which is below any base64 value.
+		zipInfo, _ := base64.StdEncoding.DecodeString(z)
+		if len(zipInfo) != 0 {
+			return zipInfo
+		}
+	}
+	return []byte(z)
+}
+
 // Clone - Returns a cloned copy of current objectInfo
 func (o ObjectInfo) Clone() (cinfo ObjectInfo) {
 	cinfo = ObjectInfo{
-		Bucket:             o.Bucket,
-		Name:               o.Name,
-		ModTime:            o.ModTime,
-		Size:               o.Size,
-		IsDir:              o.IsDir,
-		ETag:               o.ETag,
-		InnerETag:          o.InnerETag,
-		VersionID:          o.VersionID,
-		IsLatest:           o.IsLatest,
-		DeleteMarker:       o.DeleteMarker,
-		TransitionStatus:   o.TransitionStatus,
-		RestoreExpires:     o.RestoreExpires,
-		RestoreOngoing:     o.RestoreOngoing,
-		ContentType:        o.ContentType,
-		ContentEncoding:    o.ContentEncoding,
-		Expires:            o.Expires,
-		CacheStatus:        o.CacheStatus,
-		CacheLookupStatus:  o.CacheLookupStatus,
-		StorageClass:       o.StorageClass,
-		ReplicationStatus:  o.ReplicationStatus,
-		UserTags:           o.UserTags,
-		Parts:              o.Parts,
-		Writer:             o.Writer,
-		Reader:             o.Reader,
-		PutObjReader:       o.PutObjReader,
-		metadataOnly:       o.metadataOnly,
-		versionOnly:        o.versionOnly,
-		keyRotation:        o.keyRotation,
-		backendType:        o.backendType,
-		AccTime:            o.AccTime,
-		Legacy:             o.Legacy,
-		VersionPurgeStatus: o.VersionPurgeStatus,
-		NumVersions:        o.NumVersions,
-		SuccessorModTime:   o.SuccessorModTime,
+		Bucket:                     o.Bucket,
+		Name:                       o.Name,
+		ModTime:                    o.ModTime,
+		Size:                       o.Size,
+		IsDir:                      o.IsDir,
+		ETag:                       o.ETag,
+		InnerETag:                  o.InnerETag,
+		VersionID:                  o.VersionID,
+		IsLatest:                   o.IsLatest,
+		DeleteMarker:               o.DeleteMarker,
+		TransitionedObject:         o.TransitionedObject,
+		RestoreExpires:             o.RestoreExpires,
+		RestoreOngoing:             o.RestoreOngoing,
+		ContentType:                o.ContentType,
+		ContentEncoding:            o.ContentEncoding,
+		Expires:                    o.Expires,
+		CacheStatus:                o.CacheStatus,
+		CacheLookupStatus:          o.CacheLookupStatus,
+		StorageClass:               o.StorageClass,
+		ReplicationStatus:          o.ReplicationStatus,
+		UserTags:                   o.UserTags,
+		Parts:                      o.Parts,
+		Writer:                     o.Writer,
+		Reader:                     o.Reader,
+		PutObjReader:               o.PutObjReader,
+		metadataOnly:               o.metadataOnly,
+		versionOnly:                o.versionOnly,
+		keyRotation:                o.keyRotation,
+		backendType:                o.backendType,
+		AccTime:                    o.AccTime,
+		Legacy:                     o.Legacy,
+		VersionPurgeStatus:         o.VersionPurgeStatus,
+		NumVersions:                o.NumVersions,
+		SuccessorModTime:           o.SuccessorModTime,
+		ReplicationStatusInternal:  o.ReplicationStatusInternal,
+		VersionPurgeStatusInternal: o.VersionPurgeStatusInternal,
 	}
 	cinfo.UserDefined = make(map[string]string, len(o.UserDefined))
 	for k, v := range o.UserDefined {
@@ -225,11 +247,31 @@ func (o ObjectInfo) Clone() (cinfo ObjectInfo) {
 	return cinfo
 }
 
+func (o ObjectInfo) tierStats() tierStats {
+	ts := tierStats{
+		TotalSize:   uint64(o.Size),
+		NumVersions: 1,
+	}
+	// the current version of an object is accounted towards objects count
+	if o.IsLatest {
+		ts.NumObjects = 1
+	}
+	return ts
+}
+
 // ReplicateObjectInfo represents object info to be replicated
 type ReplicateObjectInfo struct {
 	ObjectInfo
-	OpType     replication.Type
-	RetryCount uint32
+	OpType               replication.Type
+	EventType            string
+	RetryCount           uint32
+	ResetID              string
+	Dsc                  ReplicateDecision
+	ExistingObjResync    ResyncDecision
+	TargetArn            string
+	TargetStatuses       map[string]replication.StatusType
+	TargetPurgeStatuses  map[string]VersionPurgeStatusType
+	ReplicationTimestamp time.Time
 }
 
 // MultipartInfo captures metadata information about the uploadId
@@ -344,6 +386,15 @@ type ListMultipartsInfo struct {
 	CommonPrefixes []string
 
 	EncodingType string // Not supported yet.
+}
+
+// TransitionedObject transitioned object tier and status.
+type TransitionedObject struct {
+	Name        string
+	VersionID   string
+	Tier        string
+	FreeVersion bool
+	Status      string
 }
 
 // DeletedObjectInfo - container for list objects versions deleted objects.

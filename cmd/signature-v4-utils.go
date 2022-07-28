@@ -20,7 +20,6 @@ package cmd
 import (
 	"bytes"
 	"crypto/hmac"
-	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"io/ioutil"
@@ -28,9 +27,10 @@ import (
 	"strconv"
 	"strings"
 
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/auth"
+	"github.com/minio/minio/internal/auth"
+	"github.com/minio/minio/internal/hash/sha256"
+	xhttp "github.com/minio/minio/internal/http"
+	"github.com/minio/minio/internal/logger"
 )
 
 // http Header "x-amz-content-sha256" == "UNSIGNED-PAYLOAD" indicates that the
@@ -46,7 +46,7 @@ func skipContentSha256Cksum(r *http.Request) bool {
 	)
 
 	if isRequestPresignedSignatureV4(r) {
-		v, ok = r.URL.Query()[xhttp.AmzContentSha256]
+		v, ok = r.Form[xhttp.AmzContentSha256]
 		if !ok {
 			v, ok = r.Header[xhttp.AmzContentSha256]
 		}
@@ -54,9 +54,30 @@ func skipContentSha256Cksum(r *http.Request) bool {
 		v, ok = r.Header[xhttp.AmzContentSha256]
 	}
 
+	// Skip if no header was set.
+	if !ok {
+		return true
+	}
+
 	// If x-amz-content-sha256 is set and the value is not
 	// 'UNSIGNED-PAYLOAD' we should validate the content sha256.
-	return !(ok && v[0] != unsignedPayload)
+	switch v[0] {
+	case unsignedPayload:
+		return true
+	case emptySHA256:
+		// some broken clients set empty-sha256
+		// with > 0 content-length in the body,
+		// we should skip such clients and allow
+		// blindly such insecure clients only if
+		// S3 strict compatibility is disabled.
+		if r.ContentLength > 0 && !globalCLIContext.StrictS3Compat {
+			// We return true only in situations when
+			// deployment has asked MinIO to allow for
+			// such broken clients and content-length > 0.
+			return true
+		}
+	}
+	return false
 }
 
 // Returns SHA256 for calculating canonical-request.
@@ -82,7 +103,7 @@ func getContentSha256Cksum(r *http.Request, stype serviceType) string {
 		// X-Amz-Content-Sha256, if not set in presigned requests, checksum
 		// will default to 'UNSIGNED-PAYLOAD'.
 		defaultSha256Cksum = unsignedPayload
-		v, ok = r.URL.Query()[xhttp.AmzContentSha256]
+		v, ok = r.Form[xhttp.AmzContentSha256]
 		if !ok {
 			v, ok = r.Header[xhttp.AmzContentSha256]
 		}
@@ -120,23 +141,36 @@ func isValidRegion(reqRegion string, confRegion string) bool {
 
 // check if the access key is valid and recognized, additionally
 // also returns if the access key is owner/admin.
-func checkKeyValid(accessKey string) (auth.Credentials, bool, APIErrorCode) {
+func checkKeyValid(r *http.Request, accessKey string) (auth.Credentials, bool, APIErrorCode) {
 	if !globalIAMSys.Initialized() && !globalIsGateway {
 		// Check if server has initialized, then only proceed
 		// to check for IAM users otherwise its okay for clients
 		// to retry with 503 errors when server is coming up.
 		return auth.Credentials{}, false, ErrServerNotInitialized
 	}
-	var owner = true
-	var cred = globalActiveCred
+
+	cred := globalActiveCred
 	if cred.AccessKey != accessKey {
 		// Check if the access key is part of users credentials.
-		var ok bool
-		if cred, ok = globalIAMSys.GetUser(accessKey); !ok {
+		u, ok := globalIAMSys.GetUser(r.Context(), accessKey)
+		if !ok {
+			// Credentials will be invalid but and disabled
+			// return a different error in such a scenario.
+			if u.Credentials.Status == auth.AccountOff {
+				return cred, false, ErrAccessKeyDisabled
+			}
 			return cred, false, ErrInvalidAccessKeyID
 		}
-		owner = false
+		cred = u.Credentials
 	}
+
+	claims, s3Err := checkClaimsFromToken(r, cred)
+	if s3Err != ErrNone {
+		return cred, false, s3Err
+	}
+	cred.Claims = claims
+
+	owner := cred.AccessKey == globalActiveCred.AccessKey
 	return cred, owner, ErrNone
 }
 
@@ -150,7 +184,7 @@ func sumHMAC(key []byte, data []byte) []byte {
 // extractSignedHeaders extract signed headers from Authorization header
 func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header, APIErrorCode) {
 	reqHeaders := r.Header
-	reqQueries := r.URL.Query()
+	reqQueries := r.Form
 	// find whether "host" is part of list of signed headers.
 	// if not return ErrUnsignedHeaders. "host" is mandatory.
 	if !contains(signedHeaders, "host") {

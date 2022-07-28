@@ -28,21 +28,22 @@ import (
 	"unicode/utf8"
 
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/cmd/config"
-	"github.com/minio/minio/cmd/config/cache"
-	"github.com/minio/minio/cmd/config/compress"
-	xldap "github.com/minio/minio/cmd/config/identity/ldap"
-	"github.com/minio/minio/cmd/config/identity/openid"
-	"github.com/minio/minio/cmd/config/notify"
-	"github.com/minio/minio/cmd/config/policy/opa"
-	"github.com/minio/minio/cmd/config/storageclass"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/auth"
-	"github.com/minio/minio/pkg/event"
-	"github.com/minio/minio/pkg/event/target"
-	"github.com/minio/minio/pkg/kms"
-	xnet "github.com/minio/minio/pkg/net"
-	"github.com/minio/minio/pkg/quick"
+	"github.com/minio/minio/internal/auth"
+	"github.com/minio/minio/internal/config"
+	"github.com/minio/minio/internal/config/cache"
+	"github.com/minio/minio/internal/config/compress"
+	xldap "github.com/minio/minio/internal/config/identity/ldap"
+	"github.com/minio/minio/internal/config/identity/openid"
+	"github.com/minio/minio/internal/config/notify"
+	"github.com/minio/minio/internal/config/policy/opa"
+	"github.com/minio/minio/internal/config/storageclass"
+	"github.com/minio/minio/internal/event"
+	"github.com/minio/minio/internal/event/target"
+	"github.com/minio/minio/internal/kms"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/minio/internal/logger/target/http"
+	xnet "github.com/minio/pkg/net"
+	"github.com/minio/pkg/quick"
 )
 
 // DO NOT EDIT following message template, please open a GitHub issue to discuss instead.
@@ -2383,8 +2384,8 @@ func migrateV26ToV27() error {
 	// Enable console logging by default to avoid breaking users
 	// current deployments
 	srvConfig.Logger.Console.Enabled = true
-	srvConfig.Logger.HTTP = make(map[string]logger.HTTP)
-	srvConfig.Logger.HTTP["1"] = logger.HTTP{}
+	srvConfig.Logger.HTTP = make(map[string]http.Config)
+	srvConfig.Logger.HTTP["1"] = http.Config{}
 
 	if err = quick.SaveConfig(srvConfig, configFile, globalEtcdClient); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘26’ to ‘27’. %w", err)
@@ -2444,12 +2445,12 @@ func migrateConfigToMinioSys(objAPI ObjectLayer) (err error) {
 		return err
 	} // if errConfigNotFound proceed to migrate..
 
-	var configFiles = []string{
+	configFiles := []string{
 		getConfigFile(),
 		getConfigFile() + ".deprecated",
 		configFile,
 	}
-	var config = &serverConfigV27{}
+	config := &serverConfigV27{}
 	for _, cfgFile := range configFiles {
 		if _, err = Load(cfgFile, config); err != nil {
 			if !osIsNotExist(err) && !osIsPermission(err) {
@@ -2648,7 +2649,6 @@ func migrateV30ToV31MinioSys(objAPI ObjectLayer) error {
 
 	cfg.Version = "31"
 	cfg.OpenID = openid.Config{}
-	cfg.OpenID.JWKS.URL = &xnet.URL{}
 
 	cfg.Policy.OPA = opa.Args{
 		URL:       &xnet.URL{},
@@ -2748,12 +2748,11 @@ func migrateMinioSysConfigToKV(objAPI ObjectLayer) error {
 	for k, loggerArgs := range cfg.Logger.HTTP {
 		logger.SetLoggerHTTP(newCfg, k, loggerArgs)
 	}
-	for k, auditArgs := range cfg.Logger.Audit {
+	for k, auditArgs := range cfg.Logger.AuditWebhook {
 		logger.SetLoggerHTTPAudit(newCfg, k, auditArgs)
 	}
 
 	xldap.SetIdentityLDAP(newCfg, cfg.LDAPServerConfig)
-	openid.SetIdentityOpenID(newCfg, cfg.OpenID)
 	opa.SetPolicyOPAConfig(newCfg, cfg.Policy.OPA)
 	cache.SetCacheConfig(newCfg, cfg.Cache)
 	compress.SetCompressionConfig(newCfg, cfg.Compression)

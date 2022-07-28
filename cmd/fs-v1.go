@@ -27,25 +27,25 @@ import (
 	"os"
 	"os/user"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
 	"github.com/minio/madmin-go"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"github.com/minio/minio-go/v7/pkg/tags"
-	"github.com/minio/minio/cmd/config"
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/bucket/policy"
-	"github.com/minio/minio/pkg/color"
-	xioutil "github.com/minio/minio/pkg/ioutil"
-	"github.com/minio/minio/pkg/lock"
-	"github.com/minio/minio/pkg/mimedb"
-	"github.com/minio/minio/pkg/mountinfo"
+	"github.com/minio/minio/internal/color"
+	"github.com/minio/minio/internal/config"
+	xhttp "github.com/minio/minio/internal/http"
+	xioutil "github.com/minio/minio/internal/ioutil"
+	"github.com/minio/minio/internal/lock"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/minio/internal/mountinfo"
+	"github.com/minio/pkg/bucket/policy"
+	"github.com/minio/pkg/mimedb"
 )
 
 // Default etag is used for pre-existing objects.
@@ -54,9 +54,6 @@ var defaultEtag = "00000000000000000000000000000000-1"
 // FSObjects - Implements fs object layer.
 type FSObjects struct {
 	GatewayUnsupported
-
-	// The count of concurrent calls on FSObjects API
-	activeIOCount int64
 
 	// Path to be exported over S3 API.
 	fsPath string
@@ -99,22 +96,25 @@ func initMetaVolumeFS(fsPath, fsUUID string) error {
 	// if it doesn't exist yet.
 	metaBucketPath := pathJoin(fsPath, minioMetaBucket)
 
-	if err := os.MkdirAll(metaBucketPath, 0777); err != nil {
+	if err := os.MkdirAll(metaBucketPath, 0o777); err != nil {
 		return err
 	}
 
 	metaTmpPath := pathJoin(fsPath, minioMetaTmpBucket, fsUUID)
-	if err := os.MkdirAll(metaTmpPath, 0777); err != nil {
+	if err := os.MkdirAll(metaTmpPath, 0o777); err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(pathJoin(fsPath, dataUsageBucket), 0777); err != nil {
+	if err := os.MkdirAll(pathJoin(metaTmpPath, bgAppendsDirName), 0o777); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(pathJoin(fsPath, dataUsageBucket), 0o777); err != nil {
 		return err
 	}
 
 	metaMultipartPath := pathJoin(fsPath, minioMetaMultipartBucket)
-	return os.MkdirAll(metaMultipartPath, 0777)
-
+	return os.MkdirAll(metaMultipartPath, 0o777)
 }
 
 // NewFSObjectLayer - initialize new fs object layer.
@@ -139,6 +139,11 @@ func NewFSObjectLayer(fsPath string) (ObjectLayer, error) {
 		}
 		hint := fmt.Sprintf("Use 'sudo chown -R %s %s && sudo chmod u+rxw %s' to provide sufficient permissions.", username, fsPath, fsPath)
 		return nil, config.ErrUnableToWriteInBackend(err).Hint(hint)
+	}
+
+	fsFormatPath := pathJoin(fsPath, minioMetaBucket, formatConfigFile)
+	if _, err = fsStat(ctx, fsFormatPath); err != nil && os.IsNotExist(err) {
+		return nil, errFreshDisk
 	}
 
 	// Assign a new UUID for FS minio mode. Each server instance
@@ -176,7 +181,7 @@ func NewFSObjectLayer(fsPath string) (ObjectLayer, error) {
 	// or cause changes on backend format.
 	fs.fsFormatRlk = rlk
 
-	go fs.cleanupStaleUploads(ctx, GlobalStaleUploadsCleanupInterval, GlobalStaleUploadsExpiry)
+	go fs.cleanupStaleUploads(ctx)
 	go intDataUpdateTracker.start(ctx, fsPath)
 
 	// Return successfully initialized object layer.
@@ -204,7 +209,13 @@ func (fs *FSObjects) Shutdown(ctx context.Context) error {
 
 // BackendInfo - returns backend information
 func (fs *FSObjects) BackendInfo() madmin.BackendInfo {
-	return madmin.BackendInfo{Type: madmin.FS}
+	return madmin.BackendInfo{
+		Type:             madmin.FS,
+		StandardSCData:   []int{1},
+		StandardSCParity: 0,
+		RRSCData:         []int{1},
+		RRSCParity:       0,
+	}
 }
 
 // LocalStorageInfo - returns underlying storage statistics.
@@ -214,11 +225,6 @@ func (fs *FSObjects) LocalStorageInfo(ctx context.Context) (StorageInfo, []error
 
 // StorageInfo - returns underlying storage statistics.
 func (fs *FSObjects) StorageInfo(ctx context.Context) (StorageInfo, []error) {
-	atomic.AddInt64(&fs.activeIOCount, 1)
-	defer func() {
-		atomic.AddInt64(&fs.activeIOCount, -1)
-	}()
-
 	di, err := getDiskInfo(fs.fsPath)
 	if err != nil {
 		return StorageInfo{}, []error{err}
@@ -226,6 +232,7 @@ func (fs *FSObjects) StorageInfo(ctx context.Context) (StorageInfo, []error) {
 	storageInfo := StorageInfo{
 		Disks: []madmin.Disk{
 			{
+				State:          madmin.DriveStateOk,
 				TotalSpace:     di.Total,
 				UsedSpace:      di.Used,
 				AvailableSpace: di.Free,
@@ -233,12 +240,12 @@ func (fs *FSObjects) StorageInfo(ctx context.Context) (StorageInfo, []error) {
 			},
 		},
 	}
-	storageInfo.Backend.Type = madmin.FS
+	storageInfo.Backend = fs.BackendInfo()
 	return storageInfo, nil
 }
 
 // NSScanner returns data usage stats of the current FS deployment
-func (fs *FSObjects) NSScanner(ctx context.Context, bf *bloomFilter, updates chan<- madmin.DataUsageInfo) error {
+func (fs *FSObjects) NSScanner(ctx context.Context, bf *bloomFilter, updates chan<- DataUsageInfo, wantCycle uint32, _ madmin.HealScanMode) error {
 	defer close(updates)
 	// Load bucket totals
 	var totalCache dataUsageCache
@@ -247,10 +254,22 @@ func (fs *FSObjects) NSScanner(ctx context.Context, bf *bloomFilter, updates cha
 		return err
 	}
 	totalCache.Info.Name = dataUsageRoot
-	buckets, err := fs.ListBuckets(ctx)
+	buckets, err := fs.ListBuckets(ctx, BucketOptions{})
 	if err != nil {
 		return err
 	}
+	if len(buckets) == 0 {
+		totalCache.keepBuckets(buckets)
+		updates <- totalCache.dui(dataUsageRoot, buckets)
+		return nil
+	}
+	for i, b := range buckets {
+		if isReservedOrInvalidBucket(b.Name, false) {
+			// Delete bucket...
+			buckets = append(buckets[:i], buckets[i+1:]...)
+		}
+	}
+
 	totalCache.Info.BloomFilter = bf.bytes()
 
 	// Clear totals.
@@ -274,6 +293,7 @@ func (fs *FSObjects) NSScanner(ctx context.Context, bf *bloomFilter, updates cha
 			bCache.Info.Name = b.Name
 		}
 		bCache.Info.BloomFilter = totalCache.Info.BloomFilter
+		bCache.Info.NextCycle = wantCycle
 		upds := make(chan dataUsageEntry, 1)
 		var wg sync.WaitGroup
 		wg.Add(1)
@@ -282,7 +302,7 @@ func (fs *FSObjects) NSScanner(ctx context.Context, bf *bloomFilter, updates cha
 			for update := range upds {
 				totalCache.replace(b.Name, dataUsageRoot, update)
 				if intDataUpdateTracker.debug {
-					logger.Info(color.Green("NSScanner:")+" Got update:", len(totalCache.Cache))
+					logger.Info(color.Green("NSScanner:")+" Got update: %v", len(totalCache.Cache))
 				}
 				cloned := totalCache.clone()
 				updates <- cloned.dui(dataUsageRoot, buckets)
@@ -323,7 +343,7 @@ func (fs *FSObjects) NSScanner(ctx context.Context, bf *bloomFilter, updates cha
 		logger.LogIf(ctx, totalCache.save(ctx, fs, dataUsageCacheName))
 		cloned := totalCache.clone()
 		updates <- cloned.dui(dataUsageRoot, buckets)
-		enforceFIFOQuotaBucket(ctx, fs, b.Name, cloned.bucketUsageInfo(b.Name))
+
 	}
 
 	return nil
@@ -333,6 +353,9 @@ func (fs *FSObjects) NSScanner(ctx context.Context, bf *bloomFilter, updates cha
 // The updated cache for the bucket is returned.
 // A partially updated bucket may be returned.
 func (fs *FSObjects) scanBucket(ctx context.Context, bucket string, cache dataUsageCache) (dataUsageCache, error) {
+	defer close(cache.Info.updates)
+	defer globalScannerMetrics.log(scannerMetricScanBucketDisk, fs.fsPath, bucket)()
+
 	// Get bucket policy
 	// Check if the current bucket has a configured lifecycle policy
 	lc, err := globalLifecycleSys.Get(bucket)
@@ -344,8 +367,18 @@ func (fs *FSObjects) scanBucket(ctx context.Context, bucket string, cache dataUs
 	}
 
 	// Load bucket info.
-	cache, err = scanDataFolder(ctx, fs.fsPath, cache, func(item scannerItem) (sizeSummary, error) {
+	cache, err = scanDataFolder(ctx, -1, -1, fs.fsPath, cache, func(item scannerItem) (sizeSummary, error) {
 		bucket, object := item.bucket, item.objectPath()
+		stopFn := globalScannerMetrics.log(scannerMetricScanObject, fs.fsPath, PathJoin(item.bucket, item.objectPath()))
+		defer stopFn()
+
+		var fsMetaBytes []byte
+		done := globalScannerMetrics.timeSize(scannerMetricReadMetadata)
+		defer func() {
+			if done != nil {
+				done(len(fsMetaBytes))
+			}
+		}()
 		fsMetaBytes, err := xioutil.ReadFile(pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, bucket, object, fs.metaJSONFile))
 		if err != nil && !osIsNotExist(err) {
 			if intDataUpdateTracker.debug {
@@ -357,7 +390,7 @@ func (fs *FSObjects) scanBucket(ctx context.Context, bucket string, cache dataUs
 		fsMeta := newFSMetaV1()
 		metaOk := false
 		if len(fsMetaBytes) > 0 {
-			var json = jsoniter.ConfigCompatibleWithStandardLibrary
+			json := jsoniter.ConfigCompatibleWithStandardLibrary
 			if err = json.Unmarshal(fsMetaBytes, &fsMeta); err == nil {
 				metaOk = true
 			}
@@ -374,20 +407,27 @@ func (fs *FSObjects) scanBucket(ctx context.Context, bucket string, cache dataUs
 			}
 			return sizeSummary{}, errSkipFile
 		}
+		done(len(fsMetaBytes))
+		done = nil
+
+		// FS has no "all versions". Increment the counter, though
+		globalScannerMetrics.incNoTime(scannerMetricApplyAll)
 
 		oi := fsMeta.ToObjectInfo(bucket, object, fi)
-		sz := item.applyActions(ctx, fs, actionMeta{oi: oi}, &sizeSummary{})
+		doneVer := globalScannerMetrics.time(scannerMetricApplyVersion)
+		sz := item.applyActions(ctx, fs, oi, &sizeSummary{})
+		doneVer()
 		if sz >= 0 {
 			return sizeSummary{totalSize: sz, versions: 1}, nil
 		}
 
 		return sizeSummary{totalSize: fi.Size(), versions: 1}, nil
-	})
+	}, 0)
 
 	return cache, err
 }
 
-/// Bucket operations
+// Bucket operations
 
 // getBucketDir - will convert incoming bucket names to
 // corresponding valid bucket names on the backend in a platform
@@ -413,7 +453,7 @@ func (fs *FSObjects) statBucketDir(ctx context.Context, bucket string) (os.FileI
 }
 
 // MakeBucketWithLocation - create a new bucket, returns if it already exists.
-func (fs *FSObjects) MakeBucketWithLocation(ctx context.Context, bucket string, opts BucketOptions) error {
+func (fs *FSObjects) MakeBucketWithLocation(ctx context.Context, bucket string, opts MakeBucketOptions) error {
 	if opts.LockEnabled || opts.VersioningEnabled {
 		return NotImplemented{}
 	}
@@ -424,11 +464,6 @@ func (fs *FSObjects) MakeBucketWithLocation(ctx context.Context, bucket string, 
 	}
 
 	defer NSUpdated(bucket, slashSeparator)
-
-	atomic.AddInt64(&fs.activeIOCount, 1)
-	defer func() {
-		atomic.AddInt64(&fs.activeIOCount, -1)
-	}()
 
 	bucketDir, err := fs.getBucketDir(ctx, bucket)
 	if err != nil {
@@ -468,7 +503,7 @@ func (fs *FSObjects) SetBucketPolicy(ctx context.Context, bucket string, p *poli
 		return err
 	}
 
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	configData, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -489,12 +524,7 @@ func (fs *FSObjects) DeleteBucketPolicy(ctx context.Context, bucket string) erro
 }
 
 // GetBucketInfo - fetch bucket metadata info.
-func (fs *FSObjects) GetBucketInfo(ctx context.Context, bucket string) (bi BucketInfo, e error) {
-	atomic.AddInt64(&fs.activeIOCount, 1)
-	defer func() {
-		atomic.AddInt64(&fs.activeIOCount, -1)
-	}()
-
+func (fs *FSObjects) GetBucketInfo(ctx context.Context, bucket string, opts BucketOptions) (bi BucketInfo, e error) {
 	st, err := fs.statBucketDir(ctx, bucket)
 	if err != nil {
 		return bi, toObjectErr(err, bucket)
@@ -513,18 +543,13 @@ func (fs *FSObjects) GetBucketInfo(ctx context.Context, bucket string) (bi Bucke
 }
 
 // ListBuckets - list all s3 compatible buckets (directories) at fsPath.
-func (fs *FSObjects) ListBuckets(ctx context.Context) ([]BucketInfo, error) {
+func (fs *FSObjects) ListBuckets(ctx context.Context, opts BucketOptions) ([]BucketInfo, error) {
 	if err := checkPathLength(fs.fsPath); err != nil {
 		logger.LogIf(ctx, err)
 		return nil, err
 	}
 
-	atomic.AddInt64(&fs.activeIOCount, 1)
-	defer func() {
-		atomic.AddInt64(&fs.activeIOCount, -1)
-	}()
-
-	entries, err := readDir(fs.fsPath)
+	entries, err := readDirWithOpts(fs.fsPath, readDirOpts{count: -1, followDirSymlink: true})
 	if err != nil {
 		logger.LogIf(ctx, errDiskNotFound)
 		return nil, toObjectErr(errDiskNotFound)
@@ -546,7 +571,7 @@ func (fs *FSObjects) ListBuckets(ctx context.Context) ([]BucketInfo, error) {
 			// Ignore any errors returned here.
 			continue
 		}
-		var created = fi.ModTime()
+		created := fi.ModTime()
 		meta, err := globalBucketMetadataSys.Get(fi.Name())
 		if err == nil {
 			created = meta.Created
@@ -569,27 +594,22 @@ func (fs *FSObjects) ListBuckets(ctx context.Context) ([]BucketInfo, error) {
 
 // DeleteBucket - delete a bucket and all the metadata associated
 // with the bucket including pending multipart, object metadata.
-func (fs *FSObjects) DeleteBucket(ctx context.Context, bucket string, forceDelete bool) error {
+func (fs *FSObjects) DeleteBucket(ctx context.Context, bucket string, opts DeleteBucketOptions) error {
 	defer NSUpdated(bucket, slashSeparator)
-
-	atomic.AddInt64(&fs.activeIOCount, 1)
-	defer func() {
-		atomic.AddInt64(&fs.activeIOCount, -1)
-	}()
 
 	bucketDir, err := fs.getBucketDir(ctx, bucket)
 	if err != nil {
 		return toObjectErr(err, bucket)
 	}
 
-	if !forceDelete {
+	if !opts.Force {
 		// Attempt to delete regular bucket.
 		if err = fsRemoveDir(ctx, bucketDir); err != nil {
 			return toObjectErr(err, bucket)
 		}
 	} else {
 		tmpBucketPath := pathJoin(fs.fsPath, minioMetaTmpBucket, bucket+"."+mustGetUUID())
-		if err = fsSimpleRenameFile(ctx, bucketDir, tmpBucketPath); err != nil {
+		if err = Rename(bucketDir, tmpBucketPath); err != nil {
 			return toObjectErr(err, bucket)
 		}
 
@@ -610,7 +630,7 @@ func (fs *FSObjects) DeleteBucket(ctx context.Context, bucket string, forceDelet
 	return nil
 }
 
-/// Object Operations
+// Object Operations
 
 // CopyObject - copy object source object to destination object.
 // if source object and destination object are same we only
@@ -636,11 +656,6 @@ func (fs *FSObjects) CopyObject(ctx context.Context, srcBucket, srcObject, dstBu
 		ctx = lkctx.Context()
 		defer objectDWLock.Unlock(lkctx.Cancel)
 	}
-
-	atomic.AddInt64(&fs.activeIOCount, 1)
-	defer func() {
-		atomic.AddInt64(&fs.activeIOCount, -1)
-	}()
 
 	if _, err := fs.statBucketDir(ctx, srcBucket); err != nil {
 		return oi, toObjectErr(err, srcBucket)
@@ -672,8 +687,15 @@ func (fs *FSObjects) CopyObject(ctx context.Context, srcBucket, srcObject, dstBu
 			return oi, toObjectErr(err, srcBucket, srcObject)
 		}
 
-		// Stat the file to get file size.
-		fi, err := fsStatFile(ctx, pathJoin(fs.fsPath, srcBucket, srcObject))
+		fsObjectPath := pathJoin(fs.fsPath, srcBucket, srcObject)
+
+		// Update object modtime
+		err = fsTouch(ctx, fsObjectPath)
+		if err != nil {
+			return oi, toObjectErr(err, srcBucket, srcObject)
+		}
+		// Stat the file to get object info
+		fi, err := fsStatFile(ctx, fsObjectPath)
 		if err != nil {
 			return oi, toObjectErr(err, srcBucket, srcObject)
 		}
@@ -708,16 +730,11 @@ func (fs *FSObjects) GetObjectNInfo(ctx context.Context, bucket, object string, 
 		return nil, err
 	}
 
-	atomic.AddInt64(&fs.activeIOCount, 1)
-	defer func() {
-		atomic.AddInt64(&fs.activeIOCount, -1)
-	}()
-
 	if _, err = fs.statBucketDir(ctx, bucket); err != nil {
 		return nil, toObjectErr(err, bucket)
 	}
 
-	var nsUnlocker = func() {}
+	nsUnlocker := func() {}
 
 	if lockType != noLock {
 		// Lock the object before reading.
@@ -798,7 +815,7 @@ func (fs *FSObjects) GetObjectNInfo(ctx context.Context, bucket, object string, 
 		return nil, err
 	}
 
-	return objReaderFn(reader, h, opts.CheckPrecondFn, closeFn, rwPoolUnlocker, nsUnlocker)
+	return objReaderFn(reader, h, closeFn, rwPoolUnlocker, nsUnlocker)
 }
 
 // Create a new fs.json file, if the existing one is corrupt. Should happen very rarely.
@@ -837,6 +854,15 @@ func (fs *FSObjects) getObjectInfoNoFSLock(ctx context.Context, bucket, object s
 		return fsMeta.ToObjectInfo(bucket, object, fi), nil
 	}
 
+	if !globalCLIContext.StrictS3Compat {
+		// Stat the file to get file size.
+		fi, err := fsStatFile(ctx, pathJoin(fs.fsPath, bucket, object))
+		if err != nil {
+			return oi, err
+		}
+		return fsMeta.ToObjectInfo(bucket, object, fi), nil
+	}
+
 	fsMetaPath := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, bucket, object, fs.metaJSONFile)
 	// Read `fs.json` to perhaps contend with
 	// parallel Put() operations.
@@ -846,7 +872,7 @@ func (fs *FSObjects) getObjectInfoNoFSLock(ctx context.Context, bucket, object s
 		fsMetaBuf, rerr := ioutil.ReadAll(rc)
 		rc.Close()
 		if rerr == nil {
-			var json = jsoniter.ConfigCompatibleWithStandardLibrary
+			json := jsoniter.ConfigCompatibleWithStandardLibrary
 			if rerr = json.Unmarshal(fsMetaBuf, &fsMeta); rerr != nil {
 				// For any error to read fsMeta, set default ETag and proceed.
 				fsMeta = fs.defaultFsJSON(object)
@@ -963,11 +989,6 @@ func (fs *FSObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 		}
 	}
 
-	atomic.AddInt64(&fs.activeIOCount, 1)
-	defer func() {
-		atomic.AddInt64(&fs.activeIOCount, -1)
-	}()
-
 	oi, err := fs.getObjectInfoWithLock(ctx, bucket, object)
 	if err == errCorruptedFormat || err == io.EOF {
 		lk := fs.NewNSLock(bucket, object)
@@ -987,26 +1008,6 @@ func (fs *FSObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 		return oi, toObjectErr(err, bucket, object)
 	}
 	return oi, toObjectErr(err, bucket, object)
-}
-
-// This function does the following check, suppose
-// object is "a/b/c/d", stat makes sure that objects ""a/b/c""
-// "a/b" and "a" do not exist.
-func (fs *FSObjects) parentDirIsObject(ctx context.Context, bucket, parent string) bool {
-	var isParentDirObject func(string) bool
-	isParentDirObject = func(p string) bool {
-		if p == "." || p == SlashSeparator {
-			return false
-		}
-		if fsIsFile(ctx, pathJoin(fs.fsPath, bucket, p)) {
-			// If there is already a file at prefix "p", return true.
-			return true
-		}
-
-		// Check if there is a file as one of the parent paths.
-		return isParentDirObject(path.Dir(p))
-	}
-	return isParentDirObject(parent)
 }
 
 // PutObject - creates an object upon reading from the input stream
@@ -1034,11 +1035,6 @@ func (fs *FSObjects) PutObject(ctx context.Context, bucket string, object string
 	ctx = lkctx.Context()
 	defer lk.Unlock(lkctx.Cancel)
 
-	atomic.AddInt64(&fs.activeIOCount, 1)
-	defer func() {
-		atomic.AddInt64(&fs.activeIOCount, -1)
-	}()
-
 	return fs.putObject(ctx, bucket, object, r, opts)
 }
 
@@ -1062,11 +1058,7 @@ func (fs *FSObjects) putObject(ctx context.Context, bucket string, object string
 	// with a slash separator, we treat it like a valid operation
 	// and return success.
 	if isObjectDir(object, data.Size()) {
-		// Check if an object is present as one of the parent dir.
-		if fs.parentDirIsObject(ctx, bucket, path.Dir(object)) {
-			return ObjectInfo{}, toObjectErr(errFileParentIsFile, bucket, object)
-		}
-		if err = mkdirAll(pathJoin(fs.fsPath, bucket, object), 0777); err != nil {
+		if err = mkdirAll(pathJoin(fs.fsPath, bucket, object), 0o777); err != nil {
 			logger.LogIf(ctx, err)
 			return ObjectInfo{}, toObjectErr(err, bucket, object)
 		}
@@ -1075,11 +1067,6 @@ func (fs *FSObjects) putObject(ctx context.Context, bucket string, object string
 			return ObjectInfo{}, toObjectErr(err, bucket, object)
 		}
 		return fsMeta.ToObjectInfo(bucket, object, fi), nil
-	}
-
-	// Check if an object is present as one of the parent dir.
-	if fs.parentDirIsObject(ctx, bucket, path.Dir(object)) {
-		return ObjectInfo{}, toObjectErr(errFileParentIsFile, bucket, object)
 	}
 
 	// Validate input data size and it can never be less than zero.
@@ -1215,11 +1202,6 @@ func (fs *FSObjects) DeleteObject(ctx context.Context, bucket, object string, op
 		return objInfo, err
 	}
 
-	atomic.AddInt64(&fs.activeIOCount, 1)
-	defer func() {
-		atomic.AddInt64(&fs.activeIOCount, -1)
-	}()
-
 	if _, err = fs.statBucketDir(ctx, bucket); err != nil {
 		return objInfo, toObjectErr(err, bucket)
 	}
@@ -1308,14 +1290,23 @@ func (fs *FSObjects) ListObjectVersions(ctx context.Context, bucket, prefix, mar
 
 // ListObjects - list all objects at prefix upto maxKeys., optionally delimited by '/'. Maintains the list pool
 // state for future re-entrant list requests.
-func (fs *FSObjects) ListObjects(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (loi ListObjectsInfo, e error) {
-	atomic.AddInt64(&fs.activeIOCount, 1)
-	defer func() {
-		atomic.AddInt64(&fs.activeIOCount, -1)
-	}()
-
-	return listObjects(ctx, fs, bucket, prefix, marker, delimiter, maxKeys, fs.listPool,
-		fs.listDirFactory(), fs.isLeaf, fs.isLeafDir, fs.getObjectInfoNoFSLock, fs.getObjectInfoNoFSLock)
+func (fs *FSObjects) ListObjects(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (loi ListObjectsInfo, err error) {
+	// listObjects may in rare cases not be able to find any valid results.
+	// Therefore, it cannot set a NextMarker.
+	// In that case we retry the operation, but we add a
+	// max limit, so we never end up in an infinite loop.
+	tries := 50
+	for {
+		loi, err = listObjects(ctx, fs, bucket, prefix, marker, delimiter, maxKeys, fs.listPool,
+			fs.listDirFactory(), fs.isLeaf, fs.isLeafDir, fs.getObjectInfoNoFSLock, fs.getObjectInfoNoFSLock)
+		if err != nil {
+			return loi, err
+		}
+		if !loi.IsTruncated || loi.NextMarker != "" || tries == 0 {
+			return loi, nil
+		}
+		tries--
+	}
 }
 
 // GetObjectTags - get object tags from an existing object
@@ -1397,13 +1388,15 @@ func (fs *FSObjects) HealFormat(ctx context.Context, dryRun bool) (madmin.HealRe
 
 // HealObject - no-op for fs. Valid only for Erasure.
 func (fs *FSObjects) HealObject(ctx context.Context, bucket, object, versionID string, opts madmin.HealOpts) (
-	res madmin.HealResultItem, err error) {
+	res madmin.HealResultItem, err error,
+) {
 	return res, NotImplemented{}
 }
 
 // HealBucket - no-op for fs, Valid only for Erasure.
 func (fs *FSObjects) HealBucket(ctx context.Context, bucket string, opts madmin.HealOpts) (madmin.HealResultItem,
-	error) {
+	error,
+) {
 	return madmin.HealResultItem{}, NotImplemented{}
 }
 
@@ -1499,4 +1492,20 @@ func (fs *FSObjects) TransitionObject(ctx context.Context, bucket, object string
 // RestoreTransitionedObject - restore transitioned object content locally on this cluster.
 func (fs *FSObjects) RestoreTransitionedObject(ctx context.Context, bucket, object string, opts ObjectOptions) error {
 	return NotImplemented{}
+}
+
+// GetRawData returns raw file data to the callback.
+// Errors are ignored, only errors from the callback are returned.
+// For now only direct file paths are supported.
+func (fs *FSObjects) GetRawData(ctx context.Context, volume, file string, fn func(r io.Reader, host string, disk string, filename string, size int64, modtime time.Time, isDir bool) error) error {
+	f, err := os.Open(filepath.Join(fs.fsPath, volume, file))
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.IsDir() {
+		return nil
+	}
+	return fn(f, "fs", fs.fsUUID, file, st.Size(), st.ModTime(), st.IsDir())
 }

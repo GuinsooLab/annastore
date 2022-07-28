@@ -18,11 +18,7 @@
 package cmd
 
 import (
-	"net/http"
-	"strings"
-
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/pkg/bucket/lifecycle"
+	"github.com/minio/minio/internal/bucket/lifecycle"
 )
 
 // objSweeper determines if a transitioned object needs to be removed from the remote tier.
@@ -41,59 +37,36 @@ import (
 //     logger.LogIf(ctx, err)
 // }
 type objSweeper struct {
-	Object           string
-	Bucket           string
-	ReqVersion       string // version ID set by application, applies only to DeleteObject and DeleteObjects APIs
-	Versioned        bool
-	Suspended        bool
-	TransitionStatus string
-	TransitionTier   string
-	RemoteObject     string
+	Object              string
+	Bucket              string
+	VersionID           string // version ID set by application, applies only to DeleteObject and DeleteObjects APIs
+	Versioned           bool
+	Suspended           bool
+	TransitionStatus    string
+	TransitionTier      string
+	TransitionVersionID string
+	RemoteObject        string
 }
 
 // newObjSweeper returns an objSweeper for a given bucket and object.
 // It initializes the versioning information using bucket name.
 func newObjSweeper(bucket, object string) *objSweeper {
-	versioned := globalBucketVersioningSys.Enabled(bucket)
-	suspended := globalBucketVersioningSys.Suspended(bucket)
 	return &objSweeper{
-		Object:    object,
-		Bucket:    bucket,
-		Versioned: versioned,
-		Suspended: suspended,
+		Object: object,
+		Bucket: bucket,
 	}
 }
 
-// versionIDer interface is used to fetch object versionIDer from disparate sources
-// like http.Request and ObjectToDelete.
-type versionIDer interface {
-	GetVersionID() string
-}
-
-// multiDelete is a type alias for ObjectToDelete to implement versionID
-// interface
-type multiDelete ObjectToDelete
-
-// GetVersionID returns object version of an object to be deleted via
-// multi-delete API.
-func (md multiDelete) GetVersionID() string {
-	return md.VersionID
-}
-
-// singleDelete is a type alias for http.Request to implement versionID
-// interface
-type singleDelete http.Request
-
-// GetVersionID returns object version of an object to be deleted via (simple)
-// delete API. Note only when the versionID is set explicitly by the application
-// will we return a non-empty versionID.
-func (sd singleDelete) GetVersionID() string {
-	return strings.TrimSpace(sd.URL.Query().Get(xhttp.VersionID))
-}
-
 // WithVersion sets the version ID from v
-func (os *objSweeper) WithVersion(v versionIDer) *objSweeper {
-	os.ReqVersion = v.GetVersionID()
+func (os *objSweeper) WithVersion(vid string) *objSweeper {
+	os.VersionID = vid
+	return os
+}
+
+// WithVersioning sets bucket versioning for sweeper.
+func (os *objSweeper) WithVersioning(versioned, suspended bool) *objSweeper {
+	os.Versioned = versioned
+	os.Suspended = suspended
 	return os
 }
 
@@ -101,21 +74,22 @@ func (os *objSweeper) WithVersion(v versionIDer) *objSweeper {
 // overwritten or deleted depending on bucket versioning status.
 func (os *objSweeper) GetOpts() ObjectOptions {
 	opts := ObjectOptions{
-		VersionID:        os.ReqVersion,
+		VersionID:        os.VersionID,
 		Versioned:        os.Versioned,
 		VersionSuspended: os.Suspended,
 	}
-	if os.Suspended && os.ReqVersion == "" {
+	if os.Suspended && os.VersionID == "" {
 		opts.VersionID = nullVersionID
 	}
 	return opts
 }
 
 // SetTransitionState sets ILM transition related information from given info.
-func (os *objSweeper) SetTransitionState(info ObjectInfo) {
-	os.TransitionTier = info.TransitionTier
-	os.TransitionStatus = info.TransitionStatus
-	os.RemoteObject = info.transitionedObjName
+func (os *objSweeper) SetTransitionState(info TransitionedObject) {
+	os.TransitionTier = info.Tier
+	os.TransitionStatus = info.Status
+	os.RemoteObject = info.Name
+	os.TransitionVersionID = info.VersionID
 }
 
 // shouldRemoveRemoteObject determines if a transitioned object should be
@@ -138,11 +112,15 @@ func (os *objSweeper) shouldRemoveRemoteObject() (jentry, bool) {
 	switch {
 	case !os.Versioned, os.Suspended: // 1, 2.a, 2.b
 		delTier = true
-	case os.Versioned && os.ReqVersion != "": // 3.a
+	case os.Versioned && os.VersionID != "": // 3.a
 		delTier = true
 	}
 	if delTier {
-		return jentry{ObjName: os.RemoteObject, TierName: os.TransitionTier}, true
+		return jentry{
+			ObjName:   os.RemoteObject,
+			VersionID: os.TransitionVersionID,
+			TierName:  os.TransitionTier,
+		}, true
 	}
 	return jentry{}, false
 }

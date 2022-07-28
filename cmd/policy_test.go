@@ -23,22 +23,22 @@ import (
 
 	miniogopolicy "github.com/minio/minio-go/v7/pkg/policy"
 	"github.com/minio/minio-go/v7/pkg/set"
-	"github.com/minio/minio/pkg/bucket/policy"
-	"github.com/minio/minio/pkg/bucket/policy/condition"
+	"github.com/minio/pkg/bucket/policy"
+	"github.com/minio/pkg/bucket/policy/condition"
 )
 
 func TestPolicySysIsAllowed(t *testing.T) {
 	p := &policy.Policy{
 		Version: policy.DefaultVersion,
 		Statements: []policy.Statement{
-			policy.NewStatement(
+			policy.NewStatement("",
 				policy.Allow,
 				policy.NewPrincipal("*"),
 				policy.NewActionSet(policy.GetBucketLocationAction),
 				policy.NewResourceSet(policy.NewResource("mybucket", "")),
 				condition.NewFunctions(),
 			),
-			policy.NewStatement(
+			policy.NewStatement("",
 				policy.Allow,
 				policy.NewPrincipal("*"),
 				policy.NewActionSet(policy.PutObjectAction),
@@ -164,14 +164,14 @@ func TestPolicyToBucketAccessPolicy(t *testing.T) {
 	case1Policy := &policy.Policy{
 		Version: policy.DefaultVersion,
 		Statements: []policy.Statement{
-			policy.NewStatement(
+			policy.NewStatement("",
 				policy.Allow,
 				policy.NewPrincipal("*"),
 				policy.NewActionSet(policy.GetBucketLocationAction, policy.ListBucketAction),
 				policy.NewResourceSet(policy.NewResource("mybucket", "")),
 				condition.NewFunctions(),
 			),
-			policy.NewStatement(
+			policy.NewStatement("",
 				policy.Allow,
 				policy.NewPrincipal("*"),
 				policy.NewActionSet(policy.GetObjectAction),
@@ -199,7 +199,7 @@ func TestPolicyToBucketAccessPolicy(t *testing.T) {
 	case3Policy := &policy.Policy{
 		Version: "12-10-2012",
 		Statements: []policy.Statement{
-			policy.NewStatement(
+			policy.NewStatement("",
 				policy.Allow,
 				policy.NewPrincipal("*"),
 				policy.NewActionSet(policy.PutObjectAction),
@@ -244,14 +244,14 @@ func TestBucketAccessPolicyToPolicy(t *testing.T) {
 	case1Result := &policy.Policy{
 		Version: policy.DefaultVersion,
 		Statements: []policy.Statement{
-			policy.NewStatement(
+			policy.NewStatement("",
 				policy.Allow,
 				policy.NewPrincipal("*"),
 				policy.NewActionSet(policy.GetBucketLocationAction, policy.ListBucketAction),
 				policy.NewResourceSet(policy.NewResource("mybucket", "")),
 				condition.NewFunctions(),
 			),
-			policy.NewStatement(
+			policy.NewStatement("",
 				policy.Allow,
 				policy.NewPrincipal("*"),
 				policy.NewActionSet(policy.GetObjectAction),

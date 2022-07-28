@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	humanize "github.com/dustin/go-humanize"
+	"github.com/dustin/go-humanize"
 )
 
 const ActualSize = 1000
@@ -58,7 +58,7 @@ func TestAddObjectPart(t *testing.T) {
 	for _, testCase := range testCases {
 		if testCase.expectedIndex > -1 {
 			partNumString := strconv.Itoa(testCase.partNum)
-			fi.AddObjectPart(testCase.partNum, "etag."+partNumString, int64(testCase.partNum+humanize.MiByte), ActualSize)
+			fi.AddObjectPart(testCase.partNum, "etag."+partNumString, int64(testCase.partNum+humanize.MiByte), ActualSize, UTCNow(), nil)
 		}
 
 		if index := objectPartIndex(fi.Parts, testCase.partNum); index != testCase.expectedIndex {
@@ -91,7 +91,7 @@ func TestObjectPartIndex(t *testing.T) {
 	// Add some parts for testing.
 	for _, testCase := range testCases {
 		partNumString := strconv.Itoa(testCase.partNum)
-		fi.AddObjectPart(testCase.partNum, "etag."+partNumString, int64(testCase.partNum+humanize.MiByte), ActualSize)
+		fi.AddObjectPart(testCase.partNum, "etag."+partNumString, int64(testCase.partNum+humanize.MiByte), ActualSize, UTCNow(), nil)
 	}
 
 	// Add failure test case.
@@ -121,7 +121,7 @@ func TestObjectToPartOffset(t *testing.T) {
 	// Total size of all parts is 5,242,899 bytes.
 	for _, partNum := range []int{1, 2, 4, 5, 7} {
 		partNumString := strconv.Itoa(partNum)
-		fi.AddObjectPart(partNum, "etag."+partNumString, int64(partNum+humanize.MiByte), ActualSize)
+		fi.AddObjectPart(partNum, "etag."+partNumString, int64(partNum+humanize.MiByte), ActualSize, UTCNow(), nil)
 	}
 
 	testCases := []struct {
@@ -160,7 +160,7 @@ func TestObjectToPartOffset(t *testing.T) {
 func TestFindFileInfoInQuorum(t *testing.T) {
 	getNFInfo := func(n int, quorum int, t int64, dataDir string) []FileInfo {
 		fi := newFileInfo("test", 8, 8)
-		fi.AddObjectPart(1, "etag", 100, 100)
+		fi.AddObjectPart(1, "etag", 100, 100, UTCNow(), nil)
 		fi.ModTime = time.Unix(t, 0)
 		fi.DataDir = dataDir
 		fis := make([]FileInfo, n)
@@ -178,28 +178,24 @@ func TestFindFileInfoInQuorum(t *testing.T) {
 	tests := []struct {
 		fis            []FileInfo
 		modTime        time.Time
-		dataDir        string
 		expectedErr    error
 		expectedQuorum int
 	}{
 		{
 			fis:            getNFInfo(16, 16, 1603863445, "36a21454-a2ca-11eb-bbaa-93a81c686f21"),
 			modTime:        time.Unix(1603863445, 0),
-			dataDir:        "36a21454-a2ca-11eb-bbaa-93a81c686f21",
 			expectedErr:    nil,
 			expectedQuorum: 8,
 		},
 		{
 			fis:            getNFInfo(16, 7, 1603863445, "36a21454-a2ca-11eb-bbaa-93a81c686f21"),
 			modTime:        time.Unix(1603863445, 0),
-			dataDir:        "36a21454-a2ca-11eb-bbaa-93a81c686f21",
 			expectedErr:    errErasureReadQuorum,
 			expectedQuorum: 8,
 		},
 		{
 			fis:            getNFInfo(16, 16, 1603863445, "36a21454-a2ca-11eb-bbaa-93a81c686f21"),
 			modTime:        time.Unix(1603863445, 0),
-			dataDir:        "36a21454-a2ca-11eb-bbaa-93a81c686f21",
 			expectedErr:    errErasureReadQuorum,
 			expectedQuorum: 0,
 		},
@@ -208,10 +204,69 @@ func TestFindFileInfoInQuorum(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run("", func(t *testing.T) {
-			_, err := findFileInfoInQuorum(context.Background(), test.fis, test.modTime, test.dataDir, test.expectedQuorum)
+			_, err := findFileInfoInQuorum(context.Background(), test.fis, test.modTime, test.expectedQuorum)
 			if err != test.expectedErr {
 				t.Errorf("Expected %s, got %s", test.expectedErr, err)
 			}
 		})
+	}
+}
+
+func TestTransitionInfoEquals(t *testing.T) {
+	inputs := []struct {
+		tier            string
+		remoteObjName   string
+		remoteVersionID string
+		status          string
+	}{
+		{
+			tier:            "S3TIER-1",
+			remoteObjName:   mustGetUUID(),
+			remoteVersionID: mustGetUUID(),
+			status:          "complete",
+		},
+		{
+			tier:            "S3TIER-2",
+			remoteObjName:   mustGetUUID(),
+			remoteVersionID: mustGetUUID(),
+			status:          "complete",
+		},
+	}
+
+	var i uint
+	for i = 0; i < 8; i++ {
+		fi := FileInfo{
+			TransitionTier:      inputs[0].tier,
+			TransitionedObjName: inputs[0].remoteObjName,
+			TransitionVersionID: inputs[0].remoteVersionID,
+			TransitionStatus:    inputs[0].status,
+		}
+		ofi := fi
+		if i&(1<<0) != 0 {
+			ofi.TransitionTier = inputs[1].tier
+		}
+		if i&(1<<1) != 0 {
+			ofi.TransitionedObjName = inputs[1].remoteObjName
+		}
+		if i&(1<<2) != 0 {
+			ofi.TransitionVersionID = inputs[1].remoteVersionID
+		}
+		actual := fi.TransitionInfoEquals(ofi)
+		if i == 0 && !actual {
+			t.Fatalf("Test %d: Expected FileInfo's transition info to be equal: fi %v ofi %v", i, fi, ofi)
+		}
+		if i != 0 && actual {
+			t.Fatalf("Test %d: Expected FileInfo's transition info to be inequal: fi %v ofi %v", i, fi, ofi)
+		}
+	}
+	fi := FileInfo{
+		TransitionTier:      inputs[0].tier,
+		TransitionedObjName: inputs[0].remoteObjName,
+		TransitionVersionID: inputs[0].remoteVersionID,
+		TransitionStatus:    inputs[0].status,
+	}
+	ofi := FileInfo{}
+	if fi.TransitionInfoEquals(ofi) {
+		t.Fatalf("Expected to be inequal: fi %v ofi %v", fi, ofi)
 	}
 }

@@ -17,18 +17,12 @@
 
 package cmd
 
-import (
-	"github.com/minio/minio/pkg/auth"
-)
+import "github.com/minio/madmin-go"
 
-// GatewayMinioSysTmp prefix is used in Azure/GCS gateway for save metadata sent by Initialize Multipart Upload API.
+// Gateway name backends
 const (
-	GatewayMinioSysTmp  = "minio.sys.tmp/"
-	AzureBackendGateway = "azure"
-	GCSBackendGateway   = "gcs"
-	HDFSBackendGateway  = "hdfs"
-	NASBackendGateway   = "nas"
-	S3BackendGateway    = "s3"
+	NASBackendGateway = "nas"
+	S3BackendGateway  = "s3"
 )
 
 // Gateway represents a gateway backend.
@@ -37,8 +31,5 @@ type Gateway interface {
 	Name() string
 
 	// NewGatewayLayer returns a new  ObjectLayer.
-	NewGatewayLayer(creds auth.Credentials) (ObjectLayer, error)
-
-	// Returns true if gateway is ready for production.
-	Production() bool
+	NewGatewayLayer(creds madmin.Credentials) (ObjectLayer, error)
 }

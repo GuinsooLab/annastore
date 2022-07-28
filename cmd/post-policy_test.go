@@ -30,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	humanize "github.com/dustin/go-humanize"
+	"github.com/dustin/go-humanize"
 )
 
 const (
@@ -61,8 +61,8 @@ func newPostPolicyBytesV4WithContentRange(credential, bucketName, objectKey stri
 		keyConditionStr, contentLengthCondStr, algorithmConditionStr, dateConditionStr, credentialConditionStr, uuidConditionStr)
 	retStr := "{"
 	retStr = retStr + expirationStr + ","
-	retStr = retStr + conditionStr
-	retStr = retStr + "}"
+	retStr += conditionStr
+	retStr += "}"
 
 	return []byte(retStr)
 }
@@ -89,8 +89,8 @@ func newPostPolicyBytesV4(credential, bucketName, objectKey string, expiration t
 	conditionStr := fmt.Sprintf(`"conditions":[%s, %s, %s, %s, %s, %s]`, bucketConditionStr, keyConditionStr, algorithmConditionStr, dateConditionStr, credentialConditionStr, uuidConditionStr)
 	retStr := "{"
 	retStr = retStr + expirationStr + ","
-	retStr = retStr + conditionStr
-	retStr = retStr + "}"
+	retStr += conditionStr
+	retStr += "}"
 
 	return []byte(retStr)
 }
@@ -108,8 +108,8 @@ func newPostPolicyBytesV2(bucketName, objectKey string, expiration time.Time) []
 	conditionStr := fmt.Sprintf(`"conditions":[%s, %s]`, bucketConditionStr, keyConditionStr)
 	retStr := "{"
 	retStr = retStr + expirationStr + ","
-	retStr = retStr + conditionStr
-	retStr = retStr + "}"
+	retStr += conditionStr
+	retStr += "}"
 
 	return []byte(retStr)
 }
@@ -141,7 +141,7 @@ func testPostPolicyBucketHandler(obj ObjectLayer, instanceType string, t TestErr
 	// objectNames[0].
 	// uploadIds [0].
 	// Create bucket before initiating NewMultipartUpload.
-	err := obj.MakeBucketWithLocation(context.Background(), bucketName, BucketOptions{})
+	err := obj.MakeBucketWithLocation(context.Background(), bucketName, MakeBucketOptions{})
 	if err != nil {
 		// Failed to create newbucket, abort.
 		t.Fatalf("%s : %s", instanceType, err.Error())
@@ -261,6 +261,16 @@ func testPostPolicyBucketHandler(obj ObjectLayer, instanceType string, t TestErr
 		{
 			objectName:         "test",
 			data:               []byte("Hello, World"),
+			expectedRespStatus: http.StatusNoContent,
+			accessKey:          credentials.AccessKey,
+			secretKey:          credentials.SecretKey,
+			dates:              []interface{}{curTimePlus5Min.Format(iso8601TimeFormat), curTime.Format(iso8601DateFormat), curTime.Format(yyyymmdd)},
+			policy:             `{"expiration": "%s","conditions":[["eq", "$bucket", "` + bucketName + `"], ["starts-with", "$key", "test/"], ["eq", "$x-amz-algorithm", "AWS4-HMAC-SHA256"], ["eq", "$x-amz-date", "%s"], ["eq", "$x-amz-credential", "` + credentials.AccessKey + `/%s/us-east-1/s3/aws4_request"],["eq", "$x-amz-meta-uuid", "1234"]]}`,
+		},
+		// Success case, big body.
+		{
+			objectName:         "test",
+			data:               bytes.Repeat([]byte("a"), 10<<20),
 			expectedRespStatus: http.StatusNoContent,
 			accessKey:          credentials.AccessKey,
 			secretKey:          credentials.SecretKey,
@@ -412,7 +422,6 @@ func testPostPolicyBucketHandler(obj ObjectLayer, instanceType string, t TestErr
 			t.Errorf("Test %d: %s: Expected the response status to be `%d`, but instead found `%d`", i+1, instanceType, testCase.expectedRespStatus, rec.Code)
 		}
 	}
-
 }
 
 // Wrapper for calling TestPostPolicyBucketHandlerRedirect tests for both Erasure multiple disks and single node setup.
@@ -438,7 +447,7 @@ func testPostPolicyBucketHandlerRedirect(obj ObjectLayer, instanceType string, t
 	targetObj := keyName + "/upload.txt"
 
 	// The url of success_action_redirect field
-	redirectURL, err := url.Parse("http://www.google.com")
+	redirectURL, err := url.Parse("http://www.google.com?query=value")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +460,7 @@ func testPostPolicyBucketHandlerRedirect(obj ObjectLayer, instanceType string, t
 	curTime := UTCNow()
 	curTimePlus5Min := curTime.Add(time.Minute * 5)
 
-	err = obj.MakeBucketWithLocation(context.Background(), bucketName, BucketOptions{})
+	err = obj.MakeBucketWithLocation(context.Background(), bucketName, MakeBucketOptions{})
 	if err != nil {
 		// Failed to create newbucket, abort.
 		t.Fatalf("%s : %s", instanceType, err.Error())
@@ -490,14 +499,17 @@ func testPostPolicyBucketHandlerRedirect(obj ObjectLayer, instanceType string, t
 		t.Error("Unexpected error: ", err)
 	}
 
-	redirectURL.RawQuery = getRedirectPostRawQuery(info)
+	v := redirectURL.Query()
+	v.Add("bucket", info.Bucket)
+	v.Add("key", info.Name)
+	v.Add("etag", "\""+info.ETag+"\"")
+	redirectURL.RawQuery = v.Encode()
 	expectedLocation := redirectURL.String()
 
 	// Check the new location url
 	if rec.Header().Get("Location") != expectedLocation {
 		t.Errorf("Unexpected location, expected = %s, found = `%s`", rec.Header().Get("Location"), expectedLocation)
 	}
-
 }
 
 // postPresignSignatureV4 - presigned signature for PostPolicy requests.
@@ -573,7 +585,8 @@ func buildGenericPolicy(t time.Time, accessKey, region, bucketName, objectName s
 }
 
 func newPostRequestV4Generic(endPoint, bucketName, objectName string, objData []byte, accessKey, secretKey string, region string,
-	t time.Time, policy []byte, addFormData map[string]string, corruptedB64 bool, corruptedMultipart bool) (*http.Request, error) {
+	t time.Time, policy []byte, addFormData map[string]string, corruptedB64 bool, corruptedMultipart bool,
+) (*http.Request, error) {
 	// Get the user credential.
 	credStr := getCredentialString(accessKey, region, t)
 

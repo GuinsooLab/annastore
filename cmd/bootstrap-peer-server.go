@@ -24,14 +24,16 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"runtime"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/minio/minio-go/v7/pkg/set"
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/cmd/rest"
+	xhttp "github.com/minio/minio/internal/http"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/minio/internal/rest"
+	"github.com/minio/pkg/env"
 )
 
 const (
@@ -52,8 +54,8 @@ type bootstrapRESTServer struct{}
 // ServerSystemConfig - captures information about server configuration.
 type ServerSystemConfig struct {
 	MinioPlatform  string
-	MinioRuntime   string
 	MinioEndpoints EndpointServerPools
+	MinioEnv       map[string]string
 }
 
 // Diff - returns error on first difference found in two configs.
@@ -82,15 +84,50 @@ func (s1 ServerSystemConfig) Diff(s2 ServerSystemConfig) error {
 					s2.MinioEndpoints[i].Endpoints[j])
 			}
 		}
-
+	}
+	if !reflect.DeepEqual(s1.MinioEnv, s2.MinioEnv) {
+		var missing []string
+		var mismatching []string
+		for k, v := range s1.MinioEnv {
+			ev, ok := s2.MinioEnv[k]
+			if !ok {
+				missing = append(missing, k)
+			} else if v != ev {
+				mismatching = append(mismatching, k)
+			}
+		}
+		if len(mismatching) > 0 {
+			return fmt.Errorf(`Expected same MINIO_ environment variables and values across all servers: Missing environment values: %s / Mismatch environment values: %s`, missing, mismatching)
+		}
+		return fmt.Errorf(`Expected same MINIO_ environment variables and values across all servers: Missing environment values: %s`, missing)
 	}
 	return nil
 }
 
+var skipEnvs = map[string]struct{}{
+	"MINIO_OPTS":         {},
+	"MINIO_CERT_PASSWD":  {},
+	"MINIO_SERVER_DEBUG": {},
+	"MINIO_DSYNC_TRACE":  {},
+}
+
 func getServerSystemCfg() ServerSystemConfig {
+	envs := env.List("MINIO_")
+	envValues := make(map[string]string, len(envs))
+	for _, envK := range envs {
+		// skip certain environment variables as part
+		// of the whitelist and could be configured
+		// differently on each nodes, update skipEnvs()
+		// map if there are such environment values
+		if _, ok := skipEnvs[envK]; ok {
+			continue
+		}
+		envValues[envK] = env.Get(envK, "")
+	}
 	return ServerSystemConfig{
 		MinioPlatform:  fmt.Sprintf("OS: %s | Arch: %s", runtime.GOOS, runtime.GOARCH),
 		MinioEndpoints: globalEndpoints,
+		MinioEnv:       envValues,
 	}
 }
 
@@ -101,7 +138,6 @@ func (b *bootstrapRESTServer) VerifyHandler(w http.ResponseWriter, r *http.Reque
 	ctx := newContext(r, w, "VerifyHandler")
 	cfg := getServerSystemCfg()
 	logger.LogIf(ctx, json.NewEncoder(w).Encode(&cfg))
-	w.(http.Flusher).Flush()
 }
 
 // registerBootstrapRESTHandlers - register bootstrap rest router.
@@ -169,11 +205,11 @@ func verifyServerSystemConfig(ctx context.Context, endpointServerPools EndpointS
 	for onlineServers < len(clnts)/2 {
 		for _, clnt := range clnts {
 			if err := clnt.Verify(ctx, srcCfg); err != nil {
-				if isNetworkError(err) {
-					offlineEndpoints = append(offlineEndpoints, clnt.String())
-					continue
+				if !isNetworkError(err) {
+					logger.LogIf(ctx, fmt.Errorf("%s has incorrect configuration: %w", clnt.String(), err))
 				}
-				return fmt.Errorf("%s as has incorrect configuration: %w", clnt.String(), err)
+				offlineEndpoints = append(offlineEndpoints, clnt.String())
+				continue
 			}
 			onlineServers++
 		}
@@ -188,7 +224,9 @@ func verifyServerSystemConfig(ctx context.Context, endpointServerPools EndpointS
 			// after 5 retries start logging that servers are not reachable yet
 			if retries >= 5 {
 				logger.Info(fmt.Sprintf("Waiting for atleast %d remote servers to be online for bootstrap check", len(clnts)/2))
-				logger.Info(fmt.Sprintf("Following servers are currently offline or unreachable %s", offlineEndpoints))
+				if len(offlineEndpoints) > 0 {
+					logger.Info(fmt.Sprintf("Following servers are currently offline or unreachable %s", offlineEndpoints))
+				}
 				retries = 0 // reset to log again after 5 retries.
 			}
 			offlineEndpoints = nil
@@ -224,7 +262,7 @@ func newBootstrapRESTClient(endpoint Endpoint) *bootstrapRESTClient {
 		Path:   bootstrapRESTPath,
 	}
 
-	restClient := rest.NewClient(serverURL, globalInternodeTransport, newAuthToken)
+	restClient := rest.NewClient(serverURL, globalInternodeTransport, newCachedAuthToken())
 	restClient.HealthCheckFn = nil
 
 	return &bootstrapRESTClient{endpoint: endpoint, restClient: restClient}

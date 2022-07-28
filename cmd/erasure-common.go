@@ -19,33 +19,12 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
-	"github.com/minio/minio/pkg/sync/errgroup"
+	"github.com/minio/minio/internal/logger"
+	"github.com/minio/minio/internal/sync/errgroup"
 )
-
-func (er erasureObjects) getLocalDisks() (localDisks []StorageAPI) {
-	disks := er.getDisks()
-	for _, disk := range disks {
-		if disk != nil && disk.IsLocal() {
-			localDisks = append(localDisks, disk)
-		}
-	}
-	return localDisks
-}
-
-func (er erasureObjects) getLoadBalancedLocalDisks() (newDisks []StorageAPI) {
-	disks := er.getDisks()
-	// Based on the random shuffling return back randomized disks.
-	for _, i := range hashOrder(UTCNow().String(), len(disks)) {
-		if disks[i-1] != nil && disks[i-1].IsLocal() {
-			if disks[i-1].Healing() == nil && disks[i-1].IsOnline() {
-				newDisks = append(newDisks, disks[i-1])
-			}
-		}
-	}
-	return newDisks
-}
 
 func (er erasureObjects) getOnlineDisks() (newDisks []StorageAPI) {
 	disks := er.getDisks()
@@ -61,7 +40,6 @@ func (er erasureObjects) getOnlineDisks() (newDisks []StorageAPI) {
 			}
 			di, err := disks[i-1].DiskInfo(context.Background())
 			if err != nil || di.Healing {
-
 				// - Do not consume disks which are not reachable
 				//   unformatted or simply not accessible for some reason.
 				//
@@ -80,6 +58,17 @@ func (er erasureObjects) getOnlineDisks() (newDisks []StorageAPI) {
 	return newDisks
 }
 
+func (er erasureObjects) getLoadBalancedLocalDisks() (newDisks []StorageAPI) {
+	disks := er.getDisks()
+	// Based on the random shuffling return back randomized disks.
+	for _, i := range hashOrder(UTCNow().String(), len(disks)) {
+		if disks[i-1] != nil && disks[i-1].IsLocal() {
+			newDisks = append(newDisks, disks[i-1])
+		}
+	}
+	return newDisks
+}
+
 // getLoadBalancedDisks - fetches load balanced (sufficiently randomized) disk slice.
 // ensures to skip disks if they are not healing and online.
 func (er erasureObjects) getLoadBalancedDisks(optimized bool) []StorageAPI {
@@ -95,7 +84,7 @@ func (er erasureObjects) getLoadBalancedDisks(optimized bool) []StorageAPI {
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	var newDisks = map[uint64][]StorageAPI{}
+	newDisks := map[uint64][]StorageAPI{}
 	// Based on the random shuffling return back randomized disks.
 	for _, i := range hashOrder(UTCNow().String(), len(disks)) {
 		i := i
@@ -135,33 +124,83 @@ func (er erasureObjects) getLoadBalancedDisks(optimized bool) []StorageAPI {
 	return newDisks[max]
 }
 
-// This function does the following check, suppose
-// object is "a/b/c/d", stat makes sure that objects
-// - "a/b/c"
-// - "a/b"
-// - "a"
-// do not exist on the namespace.
-func (er erasureObjects) parentDirIsObject(ctx context.Context, bucket, parent string) bool {
-	storageDisks := er.getDisks()
-
-	g := errgroup.WithNErrs(len(storageDisks))
-
-	for index := range storageDisks {
+// readMultipleFiles Reads raw data from all specified files from all disks.
+func readMultipleFiles(ctx context.Context, disks []StorageAPI, req ReadMultipleReq, readQuorum int) ([]ReadMultipleResp, error) {
+	resps := make([]chan ReadMultipleResp, len(disks))
+	for i := range resps {
+		resps[i] = make(chan ReadMultipleResp, len(req.Files))
+	}
+	g := errgroup.WithNErrs(len(disks))
+	// Read files in parallel across disks.
+	for index := range disks {
 		index := index
-		g.Go(func() error {
-			if storageDisks[index] == nil {
+		g.Go(func() (err error) {
+			if disks[index] == nil {
 				return errDiskNotFound
 			}
-			// Check if 'prefix' is an object on this 'disk', else continue the check the next disk
-			return storageDisks[index].CheckFile(ctx, bucket, parent)
+			return disks[index].ReadMultiple(ctx, req, resps[index])
 		}, index)
 	}
 
-	// NOTE: Observe we are not trying to read `xl.meta` and figure out the actual
-	// quorum intentionally, but rely on the default case scenario. Actual quorum
-	// verification will happen by top layer by using getObjectInfo() and will be
-	// ignored if necessary.
-	readQuorum := getReadQuorum(len(storageDisks))
+	dataArray := make([]ReadMultipleResp, 0, len(req.Files))
+	// Merge results. They should come in order from each.
+	for _, wantFile := range req.Files {
+		quorum := 0
+		toAdd := ReadMultipleResp{
+			Bucket: req.Bucket,
+			Prefix: req.Prefix,
+			File:   wantFile,
+		}
+		for i := range resps {
+			if disks[i] == nil {
+				continue
+			}
+			select {
+			case <-ctx.Done():
+			case gotFile, ok := <-resps[i]:
+				if !ok {
+					continue
+				}
+				if gotFile.Error != "" || !gotFile.Exists {
+					continue
+				}
+				if gotFile.File != wantFile || gotFile.Bucket != req.Bucket || gotFile.Prefix != req.Prefix {
+					continue
+				}
+				quorum++
+				if toAdd.Modtime.After(gotFile.Modtime) || len(gotFile.Data) < len(toAdd.Data) {
+					// Pick latest, or largest to avoid possible truncated entries.
+					continue
+				}
+				toAdd = gotFile
+			}
+		}
+		if quorum < readQuorum {
+			toAdd.Exists = false
+			toAdd.Error = errErasureReadQuorum.Error()
+			toAdd.Data = nil
+		}
+		dataArray = append(dataArray, toAdd)
+	}
 
-	return reduceReadQuorumErrs(ctx, g.Wait(), objectOpIgnoredErrs, readQuorum) == nil
+	errs := g.Wait()
+	for index, err := range errs {
+		if err == nil {
+			continue
+		}
+		if !IsErr(err, []error{
+			errFileNotFound,
+			errVolumeNotFound,
+			errFileVersionNotFound,
+			errDiskNotFound,
+			errUnformattedDisk,
+		}...) {
+			logger.LogOnceIf(ctx, fmt.Errorf("Drive %s, path (%s/%s) returned an error (%w)",
+				disks[index], req.Bucket, req.Prefix, err),
+				disks[index].String())
+		}
+	}
+
+	// Return all the metadata.
+	return dataArray, nil
 }
