@@ -5,7 +5,7 @@
 <div align="center">
     <img src="./public/annaStore.svg" width="120" alt="logo" />
     <br/>
-    <small>a high performance object storage system | powered by minio/minio</small>
+    <small>a high performance object storage system | powered by <a href="https://min.io/">minio</a></small>
 </div>
 
 # AnnaStore
