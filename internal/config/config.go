@@ -211,7 +211,7 @@ const (
 	KvDoubleQuote      = madmin.KvDoubleQuote
 	KvSingleQuote      = madmin.KvSingleQuote
 
-	// Env prefix used for all envs in MinIO
+	// Env prefix used for all envs in AnnaStore
 	EnvPrefix        = "MINIO_"
 	EnvWordDelimiter = `_`
 )
@@ -571,7 +571,7 @@ func LookupSite(siteKV KVS, regionKV KVS) (s Site, err error) {
 			// Since the region sub-system cannot be (re)set as it
 			// is legacy, we return an error to tell the user to
 			// reset the region via the new command.
-			err = Errorf("could not load region from legacy configuration as it was invalid - use 'mc admin config set myminio site region=myregion name=myname' to set a region and name (%v)", err)
+			err = Errorf("could not load region from legacy configuration as it was invalid - use 'mc admin config set mystore site region=myregion name=myname' to set a region and name (%v)", err)
 			return
 		}
 
@@ -617,7 +617,7 @@ func CheckValidKeys(subSys string, kv KVS, validKVS KVS) error {
 	}
 	if len(nkv) > 0 {
 		return Errorf(
-			"found invalid keys (%s) for '%s' sub-system, use 'mc admin config reset myminio %s' to fix invalid keys", nkv.String(), subSys, subSys)
+			"found invalid keys (%s) for '%s' sub-system, use 'mc admin config reset mystore %s' to fix invalid keys", nkv.String(), subSys, subSys)
 	}
 	return nil
 }
