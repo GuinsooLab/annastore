@@ -145,11 +145,11 @@ func newApp(name string) *cli.App {
 	app.Usage = "High Performance Object Storage"
 	app.Description = `Build high performance data infrastructure for machine learning, analytics and application data workloads with Annastore`
 	app.Flags = GlobalFlags
-	app.HideHelpCommand = true // Hide `help, h` command, we already have `minio --help`.
+	app.HideHelpCommand = true // Hide `help, h` command, we already have `annastore --help`.
 	app.Commands = commands
 	app.CustomAppHelpTemplate = minioHelpTemplate
 	app.CommandNotFound = func(ctx *cli.Context, command string) {
-		console.Printf("‘%s’ is not a minio sub-command. See ‘minio --help’.\n", command)
+		console.Printf("‘%s’ is not a annastore sub-command. See ‘annastore --help’.\n", command)
 		closestCommands := findClosestCommands(command)
 		if len(closestCommands) > 0 {
 			console.Println()
@@ -166,7 +166,7 @@ func newApp(name string) *cli.App {
 }
 
 func startupBanner(banner io.Writer) {
-	fmt.Fprintln(banner, color.Blue("Copyright:")+color.Bold(" 2022 GuinsooLab Annastore", CopyrightYear))
+	fmt.Fprintln(banner, color.Blue("Copyright:")+color.Bold(" 2021-%s GuinsooLab Annastore", CopyrightYear))
 	fmt.Fprintln(banner, color.Blue("License:")+color.Bold(" GNU AGPLv3 <https://www.gnu.org/licenses/agpl-3.0.html>"))
 	fmt.Fprintln(banner, color.Blue("Version:")+color.Bold(" %s (%s %s/%s)", ReleaseTag, runtime.Version(), runtime.GOOS, runtime.GOARCH))
 }
@@ -176,7 +176,7 @@ func versionBanner(c *cli.Context) io.Reader {
 	fmt.Fprintln(banner, color.Bold("%s version %s (commit-id=%s)", c.App.Name, c.App.Version, CommitID))
 	fmt.Fprintln(banner, color.Blue("Runtime:")+color.Bold(" %s %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH))
 	fmt.Fprintln(banner, color.Blue("License:")+color.Bold(" GNU AGPLv3 <https://www.gnu.org/licenses/agpl-3.0.html>"))
-	fmt.Fprintln(banner, color.Blue("Copyright:")+color.Bold(" 2022 GuinsooLab Annastore", CopyrightYear))
+	fmt.Fprintln(banner, color.Blue("Copyright:")+color.Bold(" 2021-%s GuinsooLab Annastore", CopyrightYear))
 	return strings.NewReader(banner.String())
 }
 
