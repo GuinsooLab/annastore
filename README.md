@@ -16,6 +16,7 @@
 [Integrations](https://ciusji.gitbook.io/guinsoolab/products/data-storage/integrations) | 
 [Monitoring](https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/monitoring) | 
 [Ecosystem](https://guinsoolab.github.io/glab) |
+[FAQ](https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/faq)
 
 
 For more information, please referrer [GuinsooLab](https://guinsoolab.github.io/glab/).
@@ -35,6 +36,10 @@ deliver a range of use cases from AI/ML, analytics, backup/restore and modern we
 - Built on the principles of web scale.
 - The defacto standard for Amazon S3 compatibility 
 - Simply powerful
+
+## Server Console
+
+![annastore-console](./public/cnosole-annastore.png)
 
 ## Upgrading AnnaStore
 
