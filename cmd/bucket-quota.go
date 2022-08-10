@@ -24,8 +24,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/logger"
 )
 
 // BucketQuotaSys - map of bucket and quota configuration.

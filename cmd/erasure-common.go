@@ -22,8 +22,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/sync/errgroup"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/sync/errgroup"
 )
 
 func (er erasureObjects) getOnlineDisks() (newDisks []StorageAPI) {

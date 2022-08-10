@@ -33,14 +33,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/GuinsooLab/annastore/internal/crypto"
+	"github.com/GuinsooLab/annastore/internal/etag"
+	"github.com/GuinsooLab/annastore/internal/fips"
+	"github.com/GuinsooLab/annastore/internal/hash/sha256"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/kms"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/minio/kes"
-	"github.com/minio/minio/internal/crypto"
-	"github.com/minio/minio/internal/etag"
-	"github.com/minio/minio/internal/fips"
-	"github.com/minio/minio/internal/hash/sha256"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/kms"
-	"github.com/minio/minio/internal/logger"
 	"github.com/minio/sio"
 )
 

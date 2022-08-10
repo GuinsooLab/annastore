@@ -22,8 +22,8 @@ import (
 	pathutil "path"
 	"sync"
 
-	"github.com/minio/minio/internal/lock"
-	"github.com/minio/minio/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/lock"
+	"github.com/GuinsooLab/annastore/internal/logger"
 )
 
 // fsIOPool represents a protected list to keep track of all

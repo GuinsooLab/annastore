@@ -28,11 +28,11 @@ import (
 	"runtime"
 	"time"
 
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/rest"
 	"github.com/gorilla/mux"
 	"github.com/minio/minio-go/v7/pkg/set"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/rest"
 	"github.com/minio/pkg/env"
 )
 

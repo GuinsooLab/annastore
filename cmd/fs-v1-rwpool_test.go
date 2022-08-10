@@ -21,7 +21,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/minio/minio/internal/lock"
+	"github.com/GuinsooLab/annastore/internal/lock"
 )
 
 // Tests long path calls.

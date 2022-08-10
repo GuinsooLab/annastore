@@ -30,16 +30,16 @@ import (
 	"sync"
 	"time"
 
+	bucketBandwidth "github.com/GuinsooLab/annastore/internal/bucket/bandwidth"
+	"github.com/GuinsooLab/annastore/internal/crypto"
+	"github.com/GuinsooLab/annastore/internal/event"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/sync/errgroup"
 	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/cespare/xxhash/v2"
 	"github.com/klauspost/compress/zip"
 	"github.com/minio/madmin-go"
-	bucketBandwidth "github.com/minio/minio/internal/bucket/bandwidth"
-	"github.com/minio/minio/internal/crypto"
-	"github.com/minio/minio/internal/event"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/sync/errgroup"
 	"github.com/minio/pkg/bucket/policy"
 	xnet "github.com/minio/pkg/net"
 )
@@ -356,8 +356,8 @@ func (sys *NotificationSys) DownloadProfilingData(ctx context.Context, writer io
 	return
 }
 
-// DownloadBinary - asks remote peers to download a new binary from the URL and to verify the checksum
-func (sys *NotificationSys) DownloadBinary(ctx context.Context, u *url.URL, sha256Sum []byte, releaseInfo string) []NotificationPeerErr {
+// VerifyBinary - asks remote peers to verify the checksum
+func (sys *NotificationSys) VerifyBinary(ctx context.Context, u *url.URL, sha256Sum []byte, releaseInfo string, reader []byte) []NotificationPeerErr {
 	ng := WithNPeers(len(sys.peerClients))
 	for idx, client := range sys.peerClients {
 		if client == nil {
@@ -365,7 +365,7 @@ func (sys *NotificationSys) DownloadBinary(ctx context.Context, u *url.URL, sha2
 		}
 		client := client
 		ng.Go(ctx, func() error {
-			return client.DownloadBinary(ctx, u, sha256Sum, releaseInfo)
+			return client.VerifyBinary(ctx, u, sha256Sum, releaseInfo, reader)
 		}, idx, *client.host)
 	}
 	return ng.Wait()
@@ -449,7 +449,7 @@ func (sys *NotificationSys) updateBloomFilter(ctx context.Context, current uint6
 			serverBF, err := client.cycleServerBloomFilter(ctx, req)
 			if false && intDataUpdateTracker.debug {
 				b, _ := json.MarshalIndent(serverBF, "", "  ")
-				logger.Info("Disk %v, Bloom filter: %v", client.host.Name, string(b))
+				logger.Info("Drive %v, Bloom filter: %v", client.host.Name, string(b))
 			}
 			// Keep lock while checking result.
 			mu.Lock()

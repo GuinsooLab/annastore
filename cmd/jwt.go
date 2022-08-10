@@ -23,12 +23,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
+	xjwt "github.com/GuinsooLab/annastore/internal/jwt"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	jwtgo "github.com/golang-jwt/jwt/v4"
 	jwtreq "github.com/golang-jwt/jwt/v4/request"
 	lru "github.com/hashicorp/golang-lru"
-	"github.com/minio/minio/internal/auth"
-	xjwt "github.com/minio/minio/internal/jwt"
-	"github.com/minio/minio/internal/logger"
 	iampolicy "github.com/minio/pkg/iam/policy"
 )
 

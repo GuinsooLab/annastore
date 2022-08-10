@@ -23,7 +23,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/minio/minio/internal/dsync"
+	"github.com/GuinsooLab/annastore/internal/dsync"
 )
 
 // Helper function to create a lock server for testing

@@ -59,15 +59,15 @@ import (
 
 	"github.com/fatih/color"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
+	"github.com/GuinsooLab/annastore/internal/config"
+	"github.com/GuinsooLab/annastore/internal/crypto"
+	"github.com/GuinsooLab/annastore/internal/hash"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/rest"
 	"github.com/gorilla/mux"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"github.com/minio/minio-go/v7/pkg/signer"
-	"github.com/minio/minio/internal/auth"
-	"github.com/minio/minio/internal/config"
-	"github.com/minio/minio/internal/crypto"
-	"github.com/minio/minio/internal/hash"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/rest"
 	"github.com/minio/pkg/bucket/policy"
 )
 
@@ -1898,7 +1898,7 @@ func ExecObjectLayerStaleFilesTest(t *testing.T, objTest objTestStaleFilesType) 
 	nDisks := 16
 	erasureDisks, err := getRandomDisks(nDisks)
 	if err != nil {
-		t.Fatalf("Initialization of disks for Erasure setup: %s", err)
+		t.Fatalf("Initialization of drives for Erasure setup: %s", err)
 	}
 	objLayer, _, err := initObjectLayer(ctx, mustGetPoolEndpoints(erasureDisks...))
 	if err != nil {

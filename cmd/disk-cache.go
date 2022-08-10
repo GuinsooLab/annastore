@@ -28,13 +28,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	objectlock "github.com/minio/minio/internal/bucket/object/lock"
-	"github.com/minio/minio/internal/color"
-	"github.com/minio/minio/internal/config/cache"
-	"github.com/minio/minio/internal/disk"
-	"github.com/minio/minio/internal/hash"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/sync/errgroup"
+	objectlock "github.com/GuinsooLab/annastore/internal/bucket/object/lock"
+	"github.com/GuinsooLab/annastore/internal/color"
+	"github.com/GuinsooLab/annastore/internal/config/cache"
+	"github.com/GuinsooLab/annastore/internal/disk"
+	"github.com/GuinsooLab/annastore/internal/hash"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/sync/errgroup"
 	"github.com/minio/pkg/wildcard"
 )
 
@@ -607,12 +607,12 @@ func newCache(config cache.Config) ([]*diskCache, bool, error) {
 				warningMsg = fmt.Sprintf("Invalid cache dir %s err : %s", dir, err.Error())
 			}
 			if rootDsk {
-				warningMsg = fmt.Sprintf("cache dir cannot be part of root disk: %s", dir)
+				warningMsg = fmt.Sprintf("cache dir cannot be part of root drive: %s", dir)
 			}
 		}
 
 		if err := checkAtimeSupport(dir); err != nil {
-			return nil, false, fmt.Errorf("Atime support required for disk caching, atime check failed with %w", err)
+			return nil, false, fmt.Errorf("Atime support required for drive caching, atime check failed with %w", err)
 		}
 
 		cache, err := newDiskCache(ctx, dir, config)
@@ -622,7 +622,7 @@ func newCache(config cache.Config) ([]*diskCache, bool, error) {
 		caches = append(caches, cache)
 	}
 	if warningMsg != "" {
-		logger.Info(color.Yellow(fmt.Sprintf("WARNING: Usage of root disk for disk caching is deprecated: %s", warningMsg)))
+		logger.Info(color.Yellow(fmt.Sprintf("WARNING: Usage of root drive for drive caching is deprecated: %s", warningMsg)))
 	}
 	return caches, migrating, nil
 }

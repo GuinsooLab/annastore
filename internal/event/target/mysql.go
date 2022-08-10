@@ -30,9 +30,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/event"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/go-sql-driver/mysql"
-	"github.com/minio/minio/internal/event"
-	"github.com/minio/minio/internal/logger"
 	xnet "github.com/minio/pkg/net"
 )
 

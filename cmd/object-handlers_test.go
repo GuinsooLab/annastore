@@ -37,10 +37,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	ioutilx "github.com/GuinsooLab/annastore/internal/ioutil"
 	humanize "github.com/dustin/go-humanize"
-	"github.com/minio/minio/internal/auth"
-	xhttp "github.com/minio/minio/internal/http"
-	ioutilx "github.com/minio/minio/internal/ioutil"
 )
 
 // Type to capture different modifications to API request to simulate failure cases.

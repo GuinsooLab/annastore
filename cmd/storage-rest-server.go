@@ -38,18 +38,18 @@ import (
 
 	"github.com/tinylib/msgp/msgp"
 
+	"github.com/GuinsooLab/annastore/internal/config"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	xioutil "github.com/GuinsooLab/annastore/internal/ioutil"
+	xjwt "github.com/GuinsooLab/annastore/internal/jwt"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	jwtreq "github.com/golang-jwt/jwt/v4/request"
 	"github.com/gorilla/mux"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/config"
-	xhttp "github.com/minio/minio/internal/http"
-	xioutil "github.com/minio/minio/internal/ioutil"
-	xjwt "github.com/minio/minio/internal/jwt"
-	"github.com/minio/minio/internal/logger"
 	xnet "github.com/minio/pkg/net"
 )
 
-var errDiskStale = errors.New("disk stale")
+var errDiskStale = errors.New("drive stale")
 
 // To abstract a disk over network.
 type storageRESTServer struct {
@@ -1171,17 +1171,17 @@ func logFatalErrs(err error, endpoint Endpoint, exit bool) {
 	case errors.Is(err, errUnsupportedDisk):
 		var hint string
 		if endpoint.URL != nil {
-			hint = fmt.Sprintf("Disk '%s' does not support O_DIRECT flags, MinIO erasure coding requires filesystems with O_DIRECT support", endpoint.Path)
+			hint = fmt.Sprintf("Drive '%s' does not support O_DIRECT flags, MinIO erasure coding requires filesystems with O_DIRECT support", endpoint.Path)
 		} else {
-			hint = "Disks do not support O_DIRECT flags, MinIO erasure coding requires filesystems with O_DIRECT support"
+			hint = "Drives do not support O_DIRECT flags, MinIO erasure coding requires filesystems with O_DIRECT support"
 		}
 		logger.Fatal(config.ErrUnsupportedBackend(err).Hint(hint), "Unable to initialize backend")
 	case errors.Is(err, errDiskNotDir):
 		var hint string
 		if endpoint.URL != nil {
-			hint = fmt.Sprintf("Disk '%s' is not a directory, MinIO erasure coding needs a directory", endpoint.Path)
+			hint = fmt.Sprintf("Drive '%s' is not a directory, MinIO erasure coding needs a directory", endpoint.Path)
 		} else {
-			hint = "Disks are not directories, MinIO erasure coding needs directories"
+			hint = "Drives are not directories, MinIO erasure coding needs directories"
 		}
 		logger.Fatal(config.ErrUnableToWriteInBackend(err).Hint(hint), "Unable to initialize backend")
 	case errors.Is(err, errDiskAccessDenied):
@@ -1200,25 +1200,25 @@ func logFatalErrs(err error, endpoint Endpoint, exit bool) {
 			hint = fmt.Sprintf("Run the following command to add write permissions: `sudo chown -R %s. <path> && sudo chmod u+rxw <path>`", username)
 		}
 		if !exit {
-			logger.LogIf(GlobalContext, fmt.Errorf("disk is not writable %s, %s", endpoint, hint))
+			logger.LogIf(GlobalContext, fmt.Errorf("Drive is not writable %s, %s", endpoint, hint))
 		} else {
 			logger.Fatal(config.ErrUnableToWriteInBackend(err).Hint(hint), "Unable to initialize backend")
 		}
 	case errors.Is(err, errFaultyDisk):
 		if !exit {
-			logger.LogIf(GlobalContext, fmt.Errorf("disk is faulty at %s, please replace the drive - disk will be offline", endpoint))
+			logger.LogIf(GlobalContext, fmt.Errorf("Drive is faulty at %s, please replace the drive - drive will be offline", endpoint))
 		} else {
 			logger.Fatal(err, "Unable to initialize backend")
 		}
 	case errors.Is(err, errDiskFull):
 		if !exit {
-			logger.LogIf(GlobalContext, fmt.Errorf("disk is already full at %s, incoming I/O will fail - disk will be offline", endpoint))
+			logger.LogIf(GlobalContext, fmt.Errorf("Drive is already full at %s, incoming I/O will fail - drive will be offline", endpoint))
 		} else {
 			logger.Fatal(err, "Unable to initialize backend")
 		}
 	default:
 		if !exit {
-			logger.LogIf(GlobalContext, fmt.Errorf("disk returned an unexpected error at %s, please investigate - disk will be offline (%w)", endpoint, err))
+			logger.LogIf(GlobalContext, fmt.Errorf("Drive returned an unexpected error at %s, please investigate - drive will be offline (%w)", endpoint, err))
 		} else {
 			logger.Fatal(err, "Unable to initialize backend")
 		}

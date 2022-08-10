@@ -22,12 +22,12 @@ import (
 	"context"
 	"sync"
 
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/logger/message/log"
+	"github.com/GuinsooLab/annastore/internal/logger/target/console"
+	"github.com/GuinsooLab/annastore/internal/logger/target/types"
+	"github.com/GuinsooLab/annastore/internal/pubsub"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/logger/message/log"
-	"github.com/minio/minio/internal/logger/target/console"
-	"github.com/minio/minio/internal/logger/target/types"
-	"github.com/minio/minio/internal/pubsub"
 	xnet "github.com/minio/pkg/net"
 )
 

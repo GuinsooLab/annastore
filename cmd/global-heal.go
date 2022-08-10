@@ -23,11 +23,11 @@ import (
 	"sort"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/color"
+	"github.com/GuinsooLab/annastore/internal/config/storageclass"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/dustin/go-humanize"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/color"
-	"github.com/minio/minio/internal/config/storageclass"
-	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/console"
 	"github.com/minio/pkg/wildcard"
 )
@@ -209,7 +209,7 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 		}
 
 		if serverDebugLog {
-			console.Debugf(color.Green("healDisk:")+" healing bucket %s content on %s erasure set\n",
+			console.Debugf(color.Green("healDrive:")+" healing bucket %s content on %s erasure set\n",
 				bucket, humanize.Ordinal(tracker.SetIndex+1))
 		}
 

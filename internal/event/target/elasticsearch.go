@@ -33,10 +33,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/event"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	elasticsearch7 "github.com/elastic/go-elasticsearch/v7"
 	"github.com/minio/highwayhash"
-	"github.com/minio/minio/internal/event"
-	"github.com/minio/minio/internal/logger"
 	xnet "github.com/minio/pkg/net"
 	"github.com/pkg/errors"
 )

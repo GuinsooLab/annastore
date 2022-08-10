@@ -18,7 +18,7 @@
 package cmd
 
 import (
-	"github.com/minio/minio/internal/bucket/lifecycle"
+	"github.com/GuinsooLab/annastore/internal/bucket/lifecycle"
 )
 
 // objSweeper determines if a transitioned object needs to be removed from the remote tier.

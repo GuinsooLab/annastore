@@ -24,9 +24,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/color"
 	"github.com/cheggaaa/pb"
 	humanize "github.com/dustin/go-humanize"
-	"github.com/minio/minio/internal/color"
 )
 
 // prepareUpdateMessage - prepares the update message, only if a

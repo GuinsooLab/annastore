@@ -24,9 +24,9 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/minio/minio/internal/fips"
-	"github.com/minio/minio/internal/ioutil"
-	"github.com/minio/minio/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/fips"
+	"github.com/GuinsooLab/annastore/internal/ioutil"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/minio/sio"
 )
 

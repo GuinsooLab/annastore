@@ -26,9 +26,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/GuinsooLab/annastore/internal/s3select/sql"
 	"github.com/bcicen/jstream"
 	csv "github.com/minio/csvparser"
-	"github.com/minio/minio/internal/s3select/sql"
 )
 
 // RawJSON is a byte-slice that contains valid JSON

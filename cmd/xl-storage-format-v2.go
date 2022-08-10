@@ -31,13 +31,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/bucket/lifecycle"
+	"github.com/GuinsooLab/annastore/internal/bucket/replication"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/cespare/xxhash/v2"
 	"github.com/google/uuid"
 	jsoniter "github.com/json-iterator/go"
-	"github.com/minio/minio/internal/bucket/lifecycle"
-	"github.com/minio/minio/internal/bucket/replication"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
 	"github.com/tinylib/msgp/msgp"
 )
 

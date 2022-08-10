@@ -28,11 +28,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/arn"
+	"github.com/GuinsooLab/annastore/internal/config"
+	jwtm "github.com/GuinsooLab/annastore/internal/jwt"
 	jwtg "github.com/golang-jwt/jwt/v4"
 	jwtgo "github.com/golang-jwt/jwt/v4"
-	"github.com/minio/minio/internal/arn"
-	"github.com/minio/minio/internal/config"
-	jwtm "github.com/minio/minio/internal/jwt"
 	xnet "github.com/minio/pkg/net"
 )
 

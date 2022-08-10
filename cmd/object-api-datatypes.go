@@ -23,10 +23,10 @@ import (
 	"math"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/bucket/replication"
+	"github.com/GuinsooLab/annastore/internal/hash"
 	humanize "github.com/dustin/go-humanize"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/bucket/replication"
-	"github.com/minio/minio/internal/hash"
 )
 
 // BackendType - represents different backend types.

@@ -33,10 +33,10 @@ import (
 	"sync"
 	"time"
 
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/rest"
 	"github.com/minio/madmin-go"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/rest"
 	xnet "github.com/minio/pkg/net"
 	xbufio "github.com/philhofer/fwd"
 	"github.com/tinylib/msgp/msgp"

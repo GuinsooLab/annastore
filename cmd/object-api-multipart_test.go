@@ -25,9 +25,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GuinsooLab/annastore/internal/config/storageclass"
+	"github.com/GuinsooLab/annastore/internal/hash"
 	humanize "github.com/dustin/go-humanize"
-	"github.com/minio/minio/internal/config/storageclass"
-	"github.com/minio/minio/internal/hash"
 )
 
 // Wrapper for calling NewMultipartUpload tests for both Erasure multiple disks and single node setup.

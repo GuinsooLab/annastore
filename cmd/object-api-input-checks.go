@@ -22,9 +22,9 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
-	"github.com/minio/minio/internal/logger"
 )
 
 // Checks on GetObject arguments, bucket and object.

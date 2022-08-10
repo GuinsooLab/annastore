@@ -26,8 +26,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/GuinsooLab/annastore/internal/color"
 	"github.com/minio/cli"
-	"github.com/minio/minio/internal/color"
 	"github.com/minio/pkg/console"
 	"github.com/minio/pkg/trie"
 	"github.com/minio/pkg/words"

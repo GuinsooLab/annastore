@@ -28,10 +28,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/GuinsooLab/annastore/internal/crypto"
+	"github.com/GuinsooLab/annastore/internal/hash"
+	"github.com/GuinsooLab/annastore/internal/kms"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/crypto"
-	"github.com/minio/minio/internal/hash"
-	"github.com/minio/minio/internal/kms"
 )
 
 //go:generate msgp -file $GOFILE

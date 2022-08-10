@@ -28,8 +28,8 @@ import (
 	"net/url"
 	"regexp"
 
-	"github.com/minio/minio/internal/arn"
-	"github.com/minio/minio/internal/config"
+	"github.com/GuinsooLab/annastore/internal/arn"
+	"github.com/GuinsooLab/annastore/internal/config"
 	"github.com/minio/pkg/env"
 	xnet "github.com/minio/pkg/net"
 )

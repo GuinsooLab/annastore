@@ -27,6 +27,10 @@ import (
 	"strings"
 	"time"
 
+	minio "github.com/GuinsooLab/annastore/cmd"
+	"github.com/GuinsooLab/annastore/internal/config"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/minio/cli"
 	"github.com/minio/madmin-go"
 	miniogo "github.com/minio/minio-go/v7"
@@ -34,10 +38,6 @@ import (
 	"github.com/minio/minio-go/v7/pkg/encrypt"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"github.com/minio/minio-go/v7/pkg/tags"
-	minio "github.com/minio/minio/cmd"
-	"github.com/minio/minio/internal/config"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/bucket/policy"
 	"github.com/minio/pkg/env"
 )

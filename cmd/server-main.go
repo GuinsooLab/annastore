@@ -34,17 +34,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
+	"github.com/GuinsooLab/annastore/internal/bucket/bandwidth"
+	"github.com/GuinsooLab/annastore/internal/color"
+	"github.com/GuinsooLab/annastore/internal/config"
+	"github.com/GuinsooLab/annastore/internal/fips"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/rest"
 	"github.com/minio/cli"
 	minio "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
-	"github.com/minio/minio/internal/auth"
-	"github.com/minio/minio/internal/bucket/bandwidth"
-	"github.com/minio/minio/internal/color"
-	"github.com/minio/minio/internal/config"
-	"github.com/minio/minio/internal/fips"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/rest"
 	"github.com/minio/pkg/certs"
 	"github.com/minio/pkg/env"
 )
@@ -631,10 +631,10 @@ func serverMain(ctx *cli.Context) {
 
 		// initialize the new disk cache objects.
 		if globalCacheConfig.Enabled {
-			logger.Info(color.Yellow("WARNING: Disk caching is deprecated for single/multi drive MinIO setups. Please migrate to using MinIO S3 gateway instead of disk caching"))
+			logger.Info(color.Yellow("WARNING: Drive caching is deprecated for single/multi drive MinIO setups. Please migrate to using MinIO S3 gateway instead of drive caching"))
 			var cacheAPI CacheObjectLayer
 			cacheAPI, err = newServerCacheObjects(GlobalContext, globalCacheConfig)
-			logger.FatalIf(err, "Unable to initialize disk caching")
+			logger.FatalIf(err, "Unable to initialize drive caching")
 
 			setCacheObjectLayer(cacheAPI)
 		}

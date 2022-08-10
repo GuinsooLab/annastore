@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minio/minio/internal/config/api"
+	"github.com/GuinsooLab/annastore/internal/config/api"
 )
 
 // Tests cleanup multipart uploads for filesystem backend.

@@ -21,7 +21,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/minio/minio/internal/s3select/sql"
+	"github.com/GuinsooLab/annastore/internal/s3select/sql"
 
 	"github.com/bcicen/jstream"
 )

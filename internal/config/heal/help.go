@@ -17,7 +17,7 @@
 
 package heal
 
-import "github.com/minio/minio/internal/config"
+import "github.com/GuinsooLab/annastore/internal/config"
 
 // Help template for caching feature.
 var (

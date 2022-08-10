@@ -24,7 +24,7 @@ import (
 	"io/ioutil"
 	"net/http"
 
-	"github.com/minio/minio/internal/config"
+	"github.com/GuinsooLab/annastore/internal/config"
 	"github.com/minio/pkg/env"
 	iampolicy "github.com/minio/pkg/iam/policy"
 	xnet "github.com/minio/pkg/net"

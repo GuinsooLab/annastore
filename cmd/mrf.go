@@ -23,8 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/logger"
 )
 
 const (

@@ -34,8 +34,8 @@ import (
 	"net/http"
 	"os"
 
+	cmd "github.com/GuinsooLab/annastore/cmd"
 	cr "github.com/minio/minio-go/v7/pkg/credentials"
-	cmd "github.com/minio/minio/cmd"
 )
 
 func main() {

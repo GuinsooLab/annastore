@@ -22,8 +22,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/GuinsooLab/annastore/internal/logger"
 	jsoniter "github.com/json-iterator/go"
-	"github.com/minio/minio/internal/logger"
 )
 
 const (

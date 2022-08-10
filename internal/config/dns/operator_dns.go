@@ -31,9 +31,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/config"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
 	"github.com/golang-jwt/jwt/v4"
-	"github.com/minio/minio/internal/config"
-	xhttp "github.com/minio/minio/internal/http"
 )
 
 var (

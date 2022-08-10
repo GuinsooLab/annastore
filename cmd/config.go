@@ -27,10 +27,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/GuinsooLab/annastore/internal/config"
+	"github.com/GuinsooLab/annastore/internal/kms"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/config"
-	"github.com/minio/minio/internal/kms"
 )
 
 const (

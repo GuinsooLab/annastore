@@ -29,10 +29,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
+	"github.com/GuinsooLab/annastore/internal/hash/sha256"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
 	humanize "github.com/dustin/go-humanize"
-	"github.com/minio/minio/internal/auth"
-	"github.com/minio/minio/internal/hash/sha256"
-	xhttp "github.com/minio/minio/internal/http"
 )
 
 // Streaming AWS Signature Version '4' constants.

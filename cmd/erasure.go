@@ -23,15 +23,16 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/bpool"
+	"github.com/GuinsooLab/annastore/internal/dsync"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/sync/errgroup"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/bpool"
-	"github.com/minio/minio/internal/dsync"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/sync/errgroup"
 	"github.com/minio/pkg/console"
 )
 
@@ -288,7 +289,7 @@ func (er erasureObjects) getOnlineDisksWithHealing() (newDisks []StorageAPI, hea
 			disk := disks[i-1]
 
 			if disk == nil {
-				infos[i-1].Error = "nil disk"
+				infos[i-1].Error = "nil drive"
 				return
 			}
 
@@ -354,7 +355,7 @@ func (er erasureObjects) nsScanner(ctx context.Context, buckets []BucketInfo, bf
 	// Collect disks we can use.
 	disks, healing := er.getOnlineDisksWithHealing()
 	if len(disks) == 0 {
-		logger.LogIf(ctx, errors.New("data-scanner: all disks are offline or being healed, skipping scanner cycle"))
+		logger.LogIf(ctx, errors.New("data-scanner: all drives are offline or being healed, skipping scanner cycle"))
 		return nil
 	}
 
@@ -438,6 +439,13 @@ func (er erasureObjects) nsScanner(ctx context.Context, buckets []BucketInfo, bf
 	// that objects that are not present in all disks are accounted and ILM applied.
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	r.Shuffle(len(disks), func(i, j int) { disks[i], disks[j] = disks[j], disks[i] })
+
+	// Restrict parallelism for disk usage scanner
+	// upto GOMAXPROCS if GOMAXPROCS is < len(disks)
+	maxProcs := runtime.GOMAXPROCS(0)
+	if maxProcs < len(disks) {
+		disks = disks[:maxProcs]
+	}
 
 	// Start one scanner per disk
 	var wg sync.WaitGroup

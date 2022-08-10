@@ -24,10 +24,10 @@ import (
 	"net/http"
 	"time"
 
+	minio "github.com/GuinsooLab/annastore/cmd"
+	"github.com/GuinsooLab/annastore/internal/hash"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	jsoniter "github.com/json-iterator/go"
-	minio "github.com/minio/minio/cmd"
-	"github.com/minio/minio/internal/hash"
-	"github.com/minio/minio/internal/logger"
 )
 
 var (

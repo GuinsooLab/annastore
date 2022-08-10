@@ -30,12 +30,12 @@ import (
 	"github.com/minio/minio-go/v7/pkg/set"
 	xnet "github.com/minio/pkg/net"
 
+	"github.com/GuinsooLab/annastore/internal/config/dns"
+	"github.com/GuinsooLab/annastore/internal/crypto"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/http/stats"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/dustin/go-humanize"
-	"github.com/minio/minio/internal/config/dns"
-	"github.com/minio/minio/internal/crypto"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/http/stats"
-	"github.com/minio/minio/internal/logger"
 )
 
 const (

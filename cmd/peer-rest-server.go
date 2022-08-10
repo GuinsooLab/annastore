@@ -29,13 +29,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	b "github.com/GuinsooLab/annastore/internal/bucket/bandwidth"
+	"github.com/GuinsooLab/annastore/internal/event"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/pubsub"
 	"github.com/dustin/go-humanize"
 	"github.com/gorilla/mux"
 	"github.com/minio/madmin-go"
-	b "github.com/minio/minio/internal/bucket/bandwidth"
-	"github.com/minio/minio/internal/event"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/pubsub"
 	"github.com/tinylib/msgp/msgp"
 )
 
@@ -770,7 +770,7 @@ func (s *peerRESTServer) DownloadBinaryHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err = downloadBinary(info.URL, info.Sha256Sum, info.ReleaseInfo, getMinioMode()); err != nil {
+	if err = verifyBinary(info.URL, info.Sha256Sum, info.ReleaseInfo, getMinioMode(), info.BinaryFile); err != nil {
 		s.writeErrorResponse(w, err)
 		return
 	}

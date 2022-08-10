@@ -27,23 +27,22 @@ import (
 	"os"
 	"os/user"
 	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/color"
+	"github.com/GuinsooLab/annastore/internal/config"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	xioutil "github.com/GuinsooLab/annastore/internal/ioutil"
+	"github.com/GuinsooLab/annastore/internal/lock"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/mountinfo"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/minio/madmin-go"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"github.com/minio/minio-go/v7/pkg/tags"
-	"github.com/minio/minio/internal/color"
-	"github.com/minio/minio/internal/config"
-	xhttp "github.com/minio/minio/internal/http"
-	xioutil "github.com/minio/minio/internal/ioutil"
-	"github.com/minio/minio/internal/lock"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/mountinfo"
 	"github.com/minio/pkg/bucket/policy"
 	"github.com/minio/pkg/mimedb"
 )
@@ -1492,20 +1491,4 @@ func (fs *FSObjects) TransitionObject(ctx context.Context, bucket, object string
 // RestoreTransitionedObject - restore transitioned object content locally on this cluster.
 func (fs *FSObjects) RestoreTransitionedObject(ctx context.Context, bucket, object string, opts ObjectOptions) error {
 	return NotImplemented{}
-}
-
-// GetRawData returns raw file data to the callback.
-// Errors are ignored, only errors from the callback are returned.
-// For now only direct file paths are supported.
-func (fs *FSObjects) GetRawData(ctx context.Context, volume, file string, fn func(r io.Reader, host string, disk string, filename string, size int64, modtime time.Time, isDir bool) error) error {
-	f, err := os.Open(filepath.Join(fs.fsPath, volume, file))
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil || st.IsDir() {
-		return nil
-	}
-	return fn(f, "fs", fs.fsUUID, file, st.Size(), st.ModTime(), st.IsDir())
 }

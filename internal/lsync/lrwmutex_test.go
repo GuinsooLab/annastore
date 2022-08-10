@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/minio/minio/internal/lsync"
+	. "github.com/GuinsooLab/annastore/internal/lsync"
 )
 
 func testSimpleWriteLock(t *testing.T, duration time.Duration) (locked bool) {

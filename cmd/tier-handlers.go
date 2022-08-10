@@ -22,11 +22,11 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/GuinsooLab/annastore/internal/config/storageclass"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/gorilla/mux"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/config/storageclass"
-	"github.com/minio/minio/internal/logger"
 	iampolicy "github.com/minio/pkg/iam/policy"
 )
 

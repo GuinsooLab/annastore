@@ -25,9 +25,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/GuinsooLab/annastore/internal/logger"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/klauspost/compress/s2"
-	"github.com/minio/minio/internal/logger"
 	"github.com/tinylib/msgp/msgp"
 	"github.com/valyala/bytebufferpool"
 )

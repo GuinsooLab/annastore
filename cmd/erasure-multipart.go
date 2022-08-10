@@ -30,11 +30,11 @@ import (
 	"sync"
 	"time"
 
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/sync/errgroup"
 	"github.com/klauspost/readahead"
 	"github.com/minio/minio-go/v7/pkg/set"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/sync/errgroup"
 	"github.com/minio/pkg/mimedb"
 )
 
@@ -1158,6 +1158,8 @@ func (er erasureObjects) CompleteMultipartUpload(ctx context.Context, bucket str
 		partsMetadata, bucket, object, writeQuorum); err != nil {
 		return oi, toObjectErr(err, bucket, object)
 	}
+
+	defer NSUpdated(bucket, object)
 
 	// Check if there is any offline disk and add it to the MRF list
 	for _, disk := range onlineDisks {

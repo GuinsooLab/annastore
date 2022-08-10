@@ -19,9 +19,9 @@ package nas
 import (
 	"context"
 
+	minio "github.com/GuinsooLab/annastore/cmd"
 	"github.com/minio/cli"
 	"github.com/minio/madmin-go"
-	minio "github.com/minio/minio/cmd"
 )
 
 func init() {

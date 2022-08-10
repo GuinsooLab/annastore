@@ -30,19 +30,19 @@ import (
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"google.golang.org/api/googleapi"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
+	"github.com/GuinsooLab/annastore/internal/bucket/lifecycle"
+	"github.com/GuinsooLab/annastore/internal/bucket/replication"
+	"github.com/GuinsooLab/annastore/internal/config/dns"
+	"github.com/GuinsooLab/annastore/internal/crypto"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	minio "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/tags"
-	"github.com/minio/minio/internal/auth"
-	"github.com/minio/minio/internal/bucket/lifecycle"
-	"github.com/minio/minio/internal/bucket/replication"
-	"github.com/minio/minio/internal/config/dns"
-	"github.com/minio/minio/internal/crypto"
-	"github.com/minio/minio/internal/logger"
 
-	objectlock "github.com/minio/minio/internal/bucket/object/lock"
-	"github.com/minio/minio/internal/bucket/versioning"
-	"github.com/minio/minio/internal/event"
-	"github.com/minio/minio/internal/hash"
+	objectlock "github.com/GuinsooLab/annastore/internal/bucket/object/lock"
+	"github.com/GuinsooLab/annastore/internal/bucket/versioning"
+	"github.com/GuinsooLab/annastore/internal/event"
+	"github.com/GuinsooLab/annastore/internal/hash"
 	"github.com/minio/pkg/bucket/policy"
 )
 
@@ -1158,7 +1158,7 @@ var errorCodes = errorCodeMap{
 	// MinIO extensions.
 	ErrStorageFull: {
 		Code:           "XMinioStorageFull",
-		Description:    "Storage backend has reached its minimum free disk threshold. Please delete a few objects to proceed.",
+		Description:    "Storage backend has reached its minimum free drive threshold. Please delete a few objects to proceed.",
 		HTTPStatusCode: http.StatusInsufficientStorage,
 	},
 	ErrRequestBodyParse: {

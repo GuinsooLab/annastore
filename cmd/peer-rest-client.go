@@ -29,13 +29,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/event"
+	"github.com/GuinsooLab/annastore/internal/http"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/pubsub"
+	"github.com/GuinsooLab/annastore/internal/rest"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/event"
-	"github.com/minio/minio/internal/http"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/pubsub"
-	"github.com/minio/minio/internal/rest"
 	xnet "github.com/minio/pkg/net"
 	"github.com/tinylib/msgp/msgp"
 )
@@ -422,16 +422,18 @@ type binaryInfo struct {
 	URL         *url.URL
 	Sha256Sum   []byte
 	ReleaseInfo string
+	BinaryFile  []byte
 }
 
-// DownloadBinary - sends download binary message to remote peers.
-func (client *peerRESTClient) DownloadBinary(ctx context.Context, u *url.URL, sha256Sum []byte, releaseInfo string) error {
+// VerifyBinary - sends verify binary message to remote peers.
+func (client *peerRESTClient) VerifyBinary(ctx context.Context, u *url.URL, sha256Sum []byte, releaseInfo string, readerInput []byte) error {
 	values := make(url.Values)
 	var reader bytes.Buffer
 	if err := gob.NewEncoder(&reader).Encode(binaryInfo{
 		URL:         u,
 		Sha256Sum:   sha256Sum,
 		ReleaseInfo: releaseInfo,
+		BinaryFile:  readerInput,
 	}); err != nil {
 		return err
 	}

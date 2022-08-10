@@ -24,7 +24,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/minio/minio/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/logger"
 )
 
 // Reads in parallel from readers.

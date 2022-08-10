@@ -28,11 +28,11 @@ import (
 	"strings"
 	"time"
 
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger/message/log"
 	"github.com/minio/highwayhash"
 	"github.com/minio/madmin-go"
 	"github.com/minio/minio-go/v7/pkg/set"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger/message/log"
 )
 
 // HighwayHash key for logging in anonymous mode

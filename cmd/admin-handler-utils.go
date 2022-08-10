@@ -23,10 +23,10 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
+	"github.com/GuinsooLab/annastore/internal/config"
 	"github.com/minio/kes"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/auth"
-	"github.com/minio/minio/internal/config"
 	iampolicy "github.com/minio/pkg/iam/policy"
 )
 

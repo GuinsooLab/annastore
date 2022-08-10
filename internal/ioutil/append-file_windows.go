@@ -21,7 +21,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/minio/minio/internal/lock"
+	"github.com/GuinsooLab/annastore/internal/lock"
 )
 
 // AppendFile - appends the file "src" to the file "dst"

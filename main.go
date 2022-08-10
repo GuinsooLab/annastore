@@ -21,14 +21,14 @@ import (
 	"os"
 
 	// MUST be first import.
-	_ "github.com/minio/minio/internal/init"
+	_ "github.com/GuinsooLab/annastore/internal/init"
 
-	minio "github.com/minio/minio/cmd"
+	store "github.com/GuinsooLab/annastore/cmd"
 
 	// Import gateway
-	_ "github.com/minio/minio/cmd/gateway"
+	_ "github.com/GuinsooLab/annastore/cmd/gateway"
 )
 
 func main() {
-	minio.Main(os.Args)
+	store.Main(os.Args)
 }

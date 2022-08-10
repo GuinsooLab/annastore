@@ -36,21 +36,21 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 
+	sse "github.com/GuinsooLab/annastore/internal/bucket/encryption"
+	objectlock "github.com/GuinsooLab/annastore/internal/bucket/object/lock"
+	"github.com/GuinsooLab/annastore/internal/bucket/replication"
+	"github.com/GuinsooLab/annastore/internal/config/dns"
+	"github.com/GuinsooLab/annastore/internal/crypto"
+	"github.com/GuinsooLab/annastore/internal/event"
+	"github.com/GuinsooLab/annastore/internal/handlers"
+	"github.com/GuinsooLab/annastore/internal/hash"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/kms"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/sync/errgroup"
 	"github.com/minio/madmin-go"
 	"github.com/minio/minio-go/v7/pkg/set"
 	"github.com/minio/minio-go/v7/pkg/tags"
-	sse "github.com/minio/minio/internal/bucket/encryption"
-	objectlock "github.com/minio/minio/internal/bucket/object/lock"
-	"github.com/minio/minio/internal/bucket/replication"
-	"github.com/minio/minio/internal/config/dns"
-	"github.com/minio/minio/internal/crypto"
-	"github.com/minio/minio/internal/event"
-	"github.com/minio/minio/internal/handlers"
-	"github.com/minio/minio/internal/hash"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/kms"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/sync/errgroup"
 	"github.com/minio/pkg/bucket/policy"
 	iampolicy "github.com/minio/pkg/iam/policy"
 )
@@ -727,9 +727,28 @@ func (api objectAPIHandlers) PutBucketHandler(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	if s3Error := checkRequestAuthType(ctx, r, policy.CreateBucketAction, bucket, ""); s3Error != ErrNone {
+	cred, owner, s3Error := checkRequestAuthTypeCredential(ctx, r, policy.CreateBucketAction, bucket, "")
+	if s3Error != ErrNone {
 		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL)
 		return
+	}
+
+	if objectLockEnabled {
+		// Creating a bucket with locking requires the user having more permissions
+		for _, action := range []iampolicy.Action{iampolicy.PutBucketObjectLockConfigurationAction, iampolicy.PutBucketVersioningAction} {
+			if !globalIAMSys.IsAllowed(iampolicy.Args{
+				AccountName:     cred.AccessKey,
+				Groups:          cred.Groups,
+				Action:          action,
+				ConditionValues: getConditionValues(r, "", cred.AccessKey, cred.Claims),
+				BucketName:      bucket,
+				IsOwner:         owner,
+				Claims:          cred.Claims,
+			}) {
+				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrAccessDenied), r.URL)
+				return
+			}
+		}
 	}
 
 	// Parse incoming location constraint.

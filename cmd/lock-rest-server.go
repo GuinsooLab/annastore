@@ -24,9 +24,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/dsync"
 	"github.com/dustin/go-humanize"
 	"github.com/gorilla/mux"
-	"github.com/minio/minio/internal/dsync"
 )
 
 const (

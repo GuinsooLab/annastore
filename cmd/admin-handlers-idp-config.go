@@ -25,12 +25,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/GuinsooLab/annastore/internal/config"
+	"github.com/GuinsooLab/annastore/internal/config/identity/openid"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/gorilla/mux"
 	"github.com/minio/madmin-go"
 	"github.com/minio/minio-go/v7/pkg/set"
-	"github.com/minio/minio/internal/config"
-	"github.com/minio/minio/internal/config/identity/openid"
-	"github.com/minio/minio/internal/logger"
 	iampolicy "github.com/minio/pkg/iam/policy"
 )
 

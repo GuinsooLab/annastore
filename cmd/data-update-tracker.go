@@ -32,9 +32,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/color"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/bits-and-blooms/bloom/v3"
-	"github.com/minio/minio/internal/color"
-	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/console"
 )
 
@@ -227,7 +227,7 @@ func (d *dataUpdateTracker) load(ctx context.Context, drives ...string) {
 	for _, drive := range drives {
 
 		cacheFormatPath := pathJoin(drive, dataUpdateTrackerFilename)
-		f, err := os.Open(cacheFormatPath)
+		f, err := OpenFile(cacheFormatPath, readMode, 0o666)
 		if err != nil {
 			if osIsNotExist(err) {
 				continue

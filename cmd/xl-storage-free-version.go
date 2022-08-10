@@ -21,8 +21,8 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/GuinsooLab/annastore/internal/bucket/lifecycle"
 	"github.com/google/uuid"
-	"github.com/minio/minio/internal/bucket/lifecycle"
 )
 
 const freeVersion = "free-version"

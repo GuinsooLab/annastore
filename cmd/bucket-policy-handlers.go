@@ -24,10 +24,10 @@ import (
 	"io/ioutil"
 	"net/http"
 
+	"github.com/GuinsooLab/annastore/internal/logger"
 	humanize "github.com/dustin/go-humanize"
 	"github.com/gorilla/mux"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/bucket/policy"
 )
 

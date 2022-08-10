@@ -24,9 +24,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/auth"
-	xhttp "github.com/minio/minio/internal/http"
 )
 
 func TestCheckValid(t *testing.T) {

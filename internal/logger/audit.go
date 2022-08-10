@@ -26,10 +26,10 @@ import (
 	"strconv"
 	"time"
 
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger/message/audit"
 	"github.com/klauspost/compress/gzhttp"
 	"github.com/minio/madmin-go"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger/message/audit"
 )
 
 // ResponseWriter - is a wrapper to trap the http response status code.

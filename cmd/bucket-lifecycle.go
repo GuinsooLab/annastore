@@ -29,14 +29,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	sse "github.com/GuinsooLab/annastore/internal/bucket/encryption"
+	"github.com/GuinsooLab/annastore/internal/bucket/lifecycle"
+	"github.com/GuinsooLab/annastore/internal/event"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/s3select"
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7/pkg/tags"
-	sse "github.com/minio/minio/internal/bucket/encryption"
-	"github.com/minio/minio/internal/bucket/lifecycle"
-	"github.com/minio/minio/internal/event"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/s3select"
 )
 
 const (

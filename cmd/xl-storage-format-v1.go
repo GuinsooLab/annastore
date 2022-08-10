@@ -24,9 +24,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/cespare/xxhash/v2"
 	jsoniter "github.com/json-iterator/go"
-	"github.com/minio/minio/internal/logger"
 )
 
 // XL constants.

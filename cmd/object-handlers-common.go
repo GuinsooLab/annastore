@@ -24,9 +24,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/minio/minio/internal/event"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/event"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
 )
 
 var etagRegex = regexp.MustCompile("\"*?([^\"]*?)\"*?$")

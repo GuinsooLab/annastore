@@ -33,16 +33,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/bucket/lifecycle"
+	"github.com/GuinsooLab/annastore/internal/bucket/object/lock"
+	"github.com/GuinsooLab/annastore/internal/bucket/replication"
+	"github.com/GuinsooLab/annastore/internal/color"
+	"github.com/GuinsooLab/annastore/internal/config/heal"
+	"github.com/GuinsooLab/annastore/internal/event"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/dustin/go-humanize"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/bucket/lifecycle"
-	"github.com/minio/minio/internal/bucket/object/lock"
-	"github.com/minio/minio/internal/bucket/replication"
-	"github.com/minio/minio/internal/color"
-	"github.com/minio/minio/internal/config/heal"
-	"github.com/minio/minio/internal/event"
-	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/console"
 	uatomic "go.uber.org/atomic"
 )
@@ -1225,28 +1225,15 @@ func (i *scannerItem) objectPath() string {
 
 // healReplication will heal a scanned item that has failed replication.
 func (i *scannerItem) healReplication(ctx context.Context, o ObjectLayer, oi ObjectInfo, sizeS *sizeSummary) {
-	roi := getHealReplicateObjectInfo(oi, i.replication)
-	if !roi.Dsc.ReplicateAny() {
+	if oi.VersionID == "" {
 		return
 	}
-
+	if i.replication.Config == nil {
+		return
+	}
+	roi := queueReplicationHeal(ctx, oi.Bucket, oi, i.replication)
 	if oi.DeleteMarker || !oi.VersionPurgeStatus.Empty() {
-		// heal delete marker replication failure or versioned delete replication failure
-		if oi.ReplicationStatus == replication.Pending ||
-			oi.ReplicationStatus == replication.Failed ||
-			oi.VersionPurgeStatus == Failed || oi.VersionPurgeStatus == Pending {
-			i.healReplicationDeletes(ctx, o, roi)
-			return
-		}
-		// if replication status is Complete on DeleteMarker and existing object resync required
-		if roi.ExistingObjResync.mustResync() && (oi.ReplicationStatus == replication.Completed || oi.ReplicationStatus.Empty()) {
-			i.healReplicationDeletes(ctx, o, roi)
-			return
-		}
 		return
-	}
-	if roi.ExistingObjResync.mustResync() {
-		roi.OpType = replication.ExistingObjectReplicationType
 	}
 
 	if sizeS.replTargetStats == nil && len(roi.TargetStatuses) > 0 {
@@ -1277,51 +1264,8 @@ func (i *scannerItem) healReplication(ctx context.Context, o ObjectLayer, oi Obj
 	}
 
 	switch oi.ReplicationStatus {
-	case replication.Pending, replication.Failed:
-		roi.EventType = ReplicateHeal
-		globalReplicationPool.queueReplicaTask(roi)
-		return
 	case replication.Replica:
 		sizeS.replicaSize += oi.Size
-	}
-	if roi.ExistingObjResync.mustResync() {
-		roi.EventType = ReplicateExisting
-		globalReplicationPool.queueReplicaTask(roi)
-	}
-}
-
-// healReplicationDeletes will heal a scanned deleted item that failed to replicate deletes.
-func (i *scannerItem) healReplicationDeletes(ctx context.Context, o ObjectLayer, roi ReplicateObjectInfo) {
-	// handle soft delete and permanent delete failures here.
-	if roi.DeleteMarker || !roi.VersionPurgeStatus.Empty() {
-		versionID := ""
-		dmVersionID := ""
-		if roi.VersionPurgeStatus.Empty() {
-			dmVersionID = roi.VersionID
-		} else {
-			versionID = roi.VersionID
-		}
-
-		doi := DeletedObjectReplicationInfo{
-			DeletedObject: DeletedObject{
-				ObjectName:            roi.Name,
-				DeleteMarkerVersionID: dmVersionID,
-				VersionID:             versionID,
-				ReplicationState:      roi.getReplicationState(roi.Dsc.String(), versionID, true),
-				DeleteMarkerMTime:     DeleteMarkerMTime{roi.ModTime},
-				DeleteMarker:          roi.DeleteMarker,
-			},
-			Bucket:    roi.Bucket,
-			OpType:    replication.HealReplicationType,
-			EventType: ReplicateHealDelete,
-		}
-		if roi.ExistingObjResync.mustResync() {
-			doi.OpType = replication.ExistingObjectReplicationType
-			doi.EventType = ReplicateExistingDelete
-			queueReplicateDeletesWrapper(doi, roi.ExistingObjResync)
-			return
-		}
-		globalReplicationPool.queueReplicaDeleteTask(doi)
 	}
 }
 

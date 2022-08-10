@@ -25,7 +25,7 @@ import (
 	"regexp"
 	"runtime"
 
-	"github.com/minio/minio/internal/color"
+	"github.com/GuinsooLab/annastore/internal/color"
 )
 
 var ansiRE = regexp.MustCompile("(\x1b[^m]*m)")
@@ -65,5 +65,5 @@ func ansiRestoreAttributes() {
 
 // logIgnoreError if true,the error will ignore.
 func logIgnoreError(err error) bool {
-	return err == nil || errors.Is(err, context.Canceled) || errors.Is(err, http.ErrServerClosed) || err.Error() == "disk not found"
+	return err == nil || errors.Is(err, context.Canceled) || errors.Is(err, http.ErrServerClosed) || err.Error() == "drive not found"
 }

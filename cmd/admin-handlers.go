@@ -41,17 +41,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/dsync"
+	"github.com/GuinsooLab/annastore/internal/handlers"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/kms"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/logger/message/log"
+	"github.com/GuinsooLab/annastore/internal/pubsub"
 	"github.com/dustin/go-humanize"
 	"github.com/gorilla/mux"
 	"github.com/klauspost/compress/zip"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/dsync"
-	"github.com/minio/minio/internal/handlers"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/kms"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/logger/message/log"
-	"github.com/minio/minio/internal/pubsub"
 	iampolicy "github.com/minio/pkg/iam/policy"
 	xnet "github.com/minio/pkg/net"
 	"github.com/secure-io/sio-go"
@@ -142,7 +142,16 @@ func (a adminAPIHandlers) ServerUpdateHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	for _, nerr := range globalNotificationSys.DownloadBinary(ctx, u, sha256Sum, releaseInfo) {
+	// Download Binary Once
+	reader, err := downloadBinary(u, mode)
+	if err != nil {
+		logger.LogIf(ctx, fmt.Errorf("server update failed with %w", err))
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+
+	// Push binary to other servers
+	for _, nerr := range globalNotificationSys.VerifyBinary(ctx, u, sha256Sum, releaseInfo, reader) {
 		if nerr.Err != nil {
 			err := AdminError{
 				Code:       AdminUpdateApplyFailure,
@@ -156,7 +165,7 @@ func (a adminAPIHandlers) ServerUpdateHandler(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	err = downloadBinary(u, sha256Sum, releaseInfo, mode)
+	err = verifyBinary(u, sha256Sum, releaseInfo, mode, reader)
 	if err != nil {
 		logger.LogIf(ctx, fmt.Errorf("server update failed with %w", err))
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
@@ -1206,18 +1215,6 @@ func (a adminAPIHandlers) ObjectSpeedTestHandler(w http.ResponseWriter, r *http.
 		concurrent = 32
 	}
 
-	if runtime.GOMAXPROCS(0) < concurrent {
-		concurrent = runtime.GOMAXPROCS(0)
-	}
-
-	// if we have less drives than concurrency then choose
-	// only the concurrency to be number of drives to start
-	// with - since default '32' might be big and may not
-	// complete in total time of 10s.
-	if globalEndpoints.NEndpoints() < concurrent {
-		concurrent = globalEndpoints.NEndpoints()
-	}
-
 	duration, err := time.ParseDuration(durationStr)
 	if err != nil {
 		duration = time.Second * 10
@@ -1275,14 +1272,24 @@ func (a adminAPIHandlers) ObjectSpeedTestHandler(w http.ResponseWriter, r *http.
 		storageClass:     storageClass,
 		bucketName:       customBucket,
 	})
+	var prevResult madmin.SpeedTestResult
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-keepAliveTicker.C:
-			// Write a blank entry to prevent client from disconnecting
-			if err := enc.Encode(madmin.SpeedTestResult{}); err != nil {
-				return
+			// if previous result is set keep writing the
+			// previous result back to the client
+			if prevResult.Version != "" {
+				if err := enc.Encode(prevResult); err != nil {
+					return
+				}
+			} else {
+				// first result is not yet obtained, keep writing
+				// empty entry to prevent client from disconnecting.
+				if err := enc.Encode(madmin.SpeedTestResult{}); err != nil {
+					return
+				}
 			}
 			w.(http.Flusher).Flush()
 		case result, ok := <-ch:
@@ -1292,6 +1299,7 @@ func (a adminAPIHandlers) ObjectSpeedTestHandler(w http.ResponseWriter, r *http.
 			if err := enc.Encode(result); err != nil {
 				return
 			}
+			prevResult = result
 			w.(http.Flusher).Flush()
 		}
 	}
@@ -2225,17 +2233,6 @@ func (a adminAPIHandlers) HealthInfoHandler(w http.ResponseWriter, r *http.Reque
 	getAndWriteObjPerfInfo := func() {
 		if query.Get(string(madmin.HealthDataTypePerfObj)) == "true" {
 			concurrent := 32
-			if runtime.GOMAXPROCS(0) < concurrent {
-				concurrent = runtime.GOMAXPROCS(0)
-			}
-
-			// if we have less drives than concurrency then choose
-			// only the concurrency to be number of drives to start
-			// with - since default '32' might be big and may not
-			// complete in total time of 10s.
-			if globalEndpoints.NEndpoints() < concurrent {
-				concurrent = globalEndpoints.NEndpoints()
-			}
 
 			storageInfo, _ := objectAPI.StorageInfo(ctx)
 
@@ -2727,7 +2724,7 @@ func appendClusterMetaInfoToZip(ctx context.Context, zipWriter *zip.Writer) {
 	go func() {
 		ci := clusterInfo{}
 		ci.Info.PoolsCount = len(globalEndpoints)
-		ci.Info.ServersCount = globalEndpoints.NEndpoints()
+		ci.Info.ServersCount = len(globalEndpoints.Hostnames())
 		ci.Info.MinioVersion = Version
 
 		si, _ := objectAPI.StorageInfo(ctx)

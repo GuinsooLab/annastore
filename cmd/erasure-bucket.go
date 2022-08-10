@@ -21,9 +21,9 @@ import (
 	"context"
 	"errors"
 
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/sync/errgroup"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/sync/errgroup"
 )
 
 // list all errors that can be ignore in a bucket operation.

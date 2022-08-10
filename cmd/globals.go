@@ -26,33 +26,33 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/bucket/bandwidth"
+	"github.com/GuinsooLab/annastore/internal/config"
+	"github.com/GuinsooLab/annastore/internal/handlers"
+	"github.com/GuinsooLab/annastore/internal/kms"
 	"github.com/minio/console/restapi"
 	minio "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/set"
-	"github.com/minio/minio/internal/bucket/bandwidth"
-	"github.com/minio/minio/internal/config"
-	"github.com/minio/minio/internal/handlers"
-	"github.com/minio/minio/internal/kms"
 	"github.com/rs/dnscache"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
+	"github.com/GuinsooLab/annastore/internal/config/cache"
+	"github.com/GuinsooLab/annastore/internal/config/callhome"
+	"github.com/GuinsooLab/annastore/internal/config/compress"
+	"github.com/GuinsooLab/annastore/internal/config/dns"
+	xldap "github.com/GuinsooLab/annastore/internal/config/identity/ldap"
+	"github.com/GuinsooLab/annastore/internal/config/identity/openid"
+	idplugin "github.com/GuinsooLab/annastore/internal/config/identity/plugin"
+	xtls "github.com/GuinsooLab/annastore/internal/config/identity/tls"
+	polplugin "github.com/GuinsooLab/annastore/internal/config/policy/plugin"
+	"github.com/GuinsooLab/annastore/internal/config/storageclass"
+	"github.com/GuinsooLab/annastore/internal/config/subnet"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
 	"github.com/dustin/go-humanize"
-	"github.com/minio/minio/internal/auth"
-	"github.com/minio/minio/internal/config/cache"
-	"github.com/minio/minio/internal/config/callhome"
-	"github.com/minio/minio/internal/config/compress"
-	"github.com/minio/minio/internal/config/dns"
-	xldap "github.com/minio/minio/internal/config/identity/ldap"
-	"github.com/minio/minio/internal/config/identity/openid"
-	idplugin "github.com/minio/minio/internal/config/identity/plugin"
-	xtls "github.com/minio/minio/internal/config/identity/tls"
-	polplugin "github.com/minio/minio/internal/config/policy/plugin"
-	"github.com/minio/minio/internal/config/storageclass"
-	"github.com/minio/minio/internal/config/subnet"
-	xhttp "github.com/minio/minio/internal/http"
 	etcd "go.etcd.io/etcd/client/v3"
 
-	"github.com/minio/minio/internal/event"
-	"github.com/minio/minio/internal/pubsub"
+	"github.com/GuinsooLab/annastore/internal/event"
+	"github.com/GuinsooLab/annastore/internal/pubsub"
 	"github.com/minio/pkg/certs"
 	xnet "github.com/minio/pkg/net"
 )
@@ -383,18 +383,30 @@ var (
 	// Add new variable global values here.
 )
 
-var globalAuthZPluginMutex sync.Mutex
+var globalAuthPluginMutex sync.Mutex
+
+func newGlobalAuthNPluginFn() *idplugin.AuthNPlugin {
+	globalAuthPluginMutex.Lock()
+	defer globalAuthPluginMutex.Unlock()
+	return globalAuthNPlugin
+}
 
 func newGlobalAuthZPluginFn() *polplugin.AuthZPlugin {
-	globalAuthZPluginMutex.Lock()
-	defer globalAuthZPluginMutex.Unlock()
+	globalAuthPluginMutex.Lock()
+	defer globalAuthPluginMutex.Unlock()
 	return globalAuthZPlugin
 }
 
+func setGlobalAuthNPlugin(authn *idplugin.AuthNPlugin) {
+	globalAuthPluginMutex.Lock()
+	globalAuthNPlugin = authn
+	globalAuthPluginMutex.Unlock()
+}
+
 func setGlobalAuthZPlugin(authz *polplugin.AuthZPlugin) {
-	globalAuthZPluginMutex.Lock()
+	globalAuthPluginMutex.Lock()
 	globalAuthZPlugin = authz
-	globalAuthZPluginMutex.Unlock()
+	globalAuthPluginMutex.Unlock()
 }
 
 var errSelfTestFailure = errors.New("self test failed. unsafe to start server")

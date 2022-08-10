@@ -24,8 +24,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/minio/minio/internal/crypto"
-	"github.com/minio/minio/internal/hash"
+	"github.com/GuinsooLab/annastore/internal/crypto"
+	"github.com/GuinsooLab/annastore/internal/hash"
 )
 
 var toAPIErrorTests = []struct {

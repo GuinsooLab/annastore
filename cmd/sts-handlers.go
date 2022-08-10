@@ -29,13 +29,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
+	"github.com/GuinsooLab/annastore/internal/config/identity/openid"
+	"github.com/GuinsooLab/annastore/internal/hash/sha256"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/gorilla/mux"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/auth"
-	"github.com/minio/minio/internal/config/identity/openid"
-	"github.com/minio/minio/internal/hash/sha256"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
 	iampolicy "github.com/minio/pkg/iam/policy"
 	"github.com/minio/pkg/wildcard"
 )
@@ -843,7 +843,8 @@ func (sts *stsAPIHandlers) AssumeRoleWithCustomToken(w http.ResponseWriter, r *h
 	claims := make(map[string]interface{})
 	defer logger.AuditLog(ctx, w, r, claims)
 
-	if globalAuthNPlugin == nil {
+	authn := newGlobalAuthNPluginFn()
+	if authn == nil {
 		writeSTSErrorResponse(ctx, w, true, ErrSTSNotInitialized, errors.New("STS API 'AssumeRoleWithCustomToken' is disabled"))
 		return
 	}
@@ -879,7 +880,7 @@ func (sts *stsAPIHandlers) AssumeRoleWithCustomToken(w http.ResponseWriter, r *h
 		return
 	}
 
-	res, err := globalAuthNPlugin.Authenticate(roleArn, token)
+	res, err := authn.Authenticate(roleArn, token)
 	if err != nil {
 		writeSTSErrorResponse(ctx, w, true, ErrSTSInvalidParameterValue, err)
 		return

@@ -28,9 +28,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/minio/minio/internal/dsync"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/lsync"
+	"github.com/GuinsooLab/annastore/internal/dsync"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/lsync"
 )
 
 // local lock servers
@@ -321,7 +321,7 @@ func getSource(n int) string {
 	if ok {
 		filename = pathutil.Base(filename)
 		funcName = strings.TrimPrefix(runtime.FuncForPC(pc).Name(),
-			"github.com/minio/minio/cmd.")
+			"github.com/GuinsooLab/annastore/cmd.")
 	} else {
 		filename = "<unknown>"
 		lineNum = 0

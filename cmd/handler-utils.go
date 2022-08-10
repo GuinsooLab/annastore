@@ -30,11 +30,11 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
+	"github.com/GuinsooLab/annastore/internal/handlers"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/auth"
-	"github.com/minio/minio/internal/handlers"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
 	xnet "github.com/minio/pkg/net"
 )
 

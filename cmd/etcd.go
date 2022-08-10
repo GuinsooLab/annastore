@@ -22,7 +22,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/minio/minio/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	etcd "go.etcd.io/etcd/client/v3"
 )
 

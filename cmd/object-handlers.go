@@ -32,6 +32,23 @@ import (
 	"sync"
 	"time"
 
+	sse "github.com/GuinsooLab/annastore/internal/bucket/encryption"
+	"github.com/GuinsooLab/annastore/internal/bucket/lifecycle"
+	objectlock "github.com/GuinsooLab/annastore/internal/bucket/object/lock"
+	"github.com/GuinsooLab/annastore/internal/bucket/replication"
+	"github.com/GuinsooLab/annastore/internal/config/dns"
+	"github.com/GuinsooLab/annastore/internal/config/storageclass"
+	"github.com/GuinsooLab/annastore/internal/crypto"
+	"github.com/GuinsooLab/annastore/internal/etag"
+	"github.com/GuinsooLab/annastore/internal/event"
+	"github.com/GuinsooLab/annastore/internal/fips"
+	"github.com/GuinsooLab/annastore/internal/handlers"
+	"github.com/GuinsooLab/annastore/internal/hash"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	xioutil "github.com/GuinsooLab/annastore/internal/ioutil"
+	"github.com/GuinsooLab/annastore/internal/kms"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/s3select"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/klauspost/compress/gzhttp"
@@ -39,23 +56,6 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio-go/v7/pkg/encrypt"
 	"github.com/minio/minio-go/v7/pkg/tags"
-	sse "github.com/minio/minio/internal/bucket/encryption"
-	"github.com/minio/minio/internal/bucket/lifecycle"
-	objectlock "github.com/minio/minio/internal/bucket/object/lock"
-	"github.com/minio/minio/internal/bucket/replication"
-	"github.com/minio/minio/internal/config/dns"
-	"github.com/minio/minio/internal/config/storageclass"
-	"github.com/minio/minio/internal/crypto"
-	"github.com/minio/minio/internal/etag"
-	"github.com/minio/minio/internal/event"
-	"github.com/minio/minio/internal/fips"
-	"github.com/minio/minio/internal/handlers"
-	"github.com/minio/minio/internal/hash"
-	xhttp "github.com/minio/minio/internal/http"
-	xioutil "github.com/minio/minio/internal/ioutil"
-	"github.com/minio/minio/internal/kms"
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/s3select"
 	"github.com/minio/pkg/bucket/policy"
 	iampolicy "github.com/minio/pkg/iam/policy"
 	xnet "github.com/minio/pkg/net"
@@ -417,12 +417,11 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 
 		return checkPreconditions(ctx, w, r, oi, opts)
 	}
-
+	var proxy proxyResult
 	gr, err := getObjectNInfo(ctx, bucket, object, rs, r.Header, readLock, opts)
 	if err != nil {
 		var (
 			reader *GetObjectReader
-			proxy  proxyResult
 			perr   error
 		)
 		proxytgts := getProxyTargets(ctx, bucket, object, opts)
@@ -491,6 +490,10 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 		}
 	}
 
+	// Queue failed/pending replication automatically
+	if !proxy.Proxy {
+		QueueReplicationHeal(ctx, bucket, objInfo)
+	}
 	// filter object lock metadata if permission does not permit
 	getRetPerms := checkRequestAuthType(ctx, r, policy.GetObjectRetentionAction, bucket, object)
 	legalHoldPerms := checkRequestAuthType(ctx, r, policy.GetObjectLegalHoldAction, bucket, object)
@@ -659,11 +662,9 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 	rangeHeader := r.Header.Get(xhttp.Range)
 
 	objInfo, err := getObjectInfo(ctx, bucket, object, opts)
+	var proxy proxyResult
 	if err != nil {
-		var (
-			proxy proxyResult
-			oi    ObjectInfo
-		)
+		var oi ObjectInfo
 		// proxy HEAD to replication target if active-active replication configured on bucket
 		proxytgts := getProxyTargets(ctx, bucket, object, opts)
 		if !proxytgts.Empty() {
@@ -690,6 +691,7 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 					w.Header()[xhttp.AmzDeleteMarker] = []string{strconv.FormatBool(objInfo.DeleteMarker)}
 				}
 			}
+			QueueReplicationHeal(ctx, bucket, objInfo)
 			writeErrorResponseHeadersOnly(w, toAPIError(ctx, err))
 			return
 		}
@@ -712,6 +714,11 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 			writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrNoSuchKey))
 			return
 		}
+	}
+
+	// Queue failed/pending replication automatically
+	if !proxy.Proxy {
+		QueueReplicationHeal(ctx, bucket, objInfo)
 	}
 
 	// filter object lock metadata if permission does not permit

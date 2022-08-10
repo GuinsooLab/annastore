@@ -23,8 +23,8 @@ import (
 	"fmt"
 	"hash/crc32"
 
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/sync/errgroup"
+	"github.com/GuinsooLab/annastore/internal/logger"
+	"github.com/GuinsooLab/annastore/internal/sync/errgroup"
 )
 
 // Returns number of errors that occurred the most (incl. nil) and the
@@ -275,7 +275,7 @@ func shuffleDisks(disks []StorageAPI, distribution []int) (shuffledDisks []Stora
 // the corresponding error in errs slice is not nil
 func evalDisks(disks []StorageAPI, errs []error) []StorageAPI {
 	if len(errs) != len(disks) {
-		logger.LogIf(GlobalContext, errors.New("unexpected disks/errors slice length"))
+		logger.LogIf(GlobalContext, errors.New("unexpected drives/errors slice length"))
 		return nil
 	}
 	newDisks := make([]StorageAPI, len(disks))

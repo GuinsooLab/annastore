@@ -22,16 +22,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/bucket/replication"
+	"github.com/GuinsooLab/annastore/internal/bucket/versioning"
+	"github.com/GuinsooLab/annastore/internal/crypto"
+	"github.com/GuinsooLab/annastore/internal/kms"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/minio/madmin-go"
 	"github.com/minio/minio-go/v7"
 	miniogo "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
-	"github.com/minio/minio/internal/bucket/replication"
-	"github.com/minio/minio/internal/bucket/versioning"
-	"github.com/minio/minio/internal/crypto"
-	"github.com/minio/minio/internal/kms"
-	"github.com/minio/minio/internal/logger"
 )
 
 const (

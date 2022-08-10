@@ -7,8 +7,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/GuinsooLab/annastore/internal/bucket/lifecycle"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/bucket/lifecycle"
 )
 
 //go:generate stringer -type=scannerMetric -trimprefix=scannerMetric $GOFILE

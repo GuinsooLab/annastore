@@ -24,10 +24,10 @@ import (
 	"runtime"
 	"strings"
 
+	color "github.com/GuinsooLab/annastore/internal/color"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	humanize "github.com/dustin/go-humanize"
 	"github.com/minio/madmin-go"
-	color "github.com/minio/minio/internal/color"
-	"github.com/minio/minio/internal/logger"
 	xnet "github.com/minio/pkg/net"
 )
 
@@ -206,7 +206,7 @@ func getStorageInfoMsg(storageInfo StorageInfo) string {
 	onlineDisks, offlineDisks := getOnlineOfflineDisksStats(storageInfo.Disks)
 	if storageInfo.Backend.Type == madmin.Erasure {
 		if offlineDisks.Sum() > 0 {
-			mcMessage = "Use `mc admin info` to look for latest server/disk info\n"
+			mcMessage = "Use `mc admin info` to look for latest server/drive info\n"
 		}
 
 		diskInfo := fmt.Sprintf(" %d Online, %d Offline. ", onlineDisks.Sum(), offlineDisks.Sum())

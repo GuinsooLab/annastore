@@ -20,11 +20,11 @@ package cmd
 import (
 	"net/http"
 
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/gorilla/mux"
 	"github.com/klauspost/compress/gzhttp"
 	"github.com/klauspost/compress/gzip"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/logger"
 )
 
 const (

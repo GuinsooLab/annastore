@@ -30,11 +30,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/bucket/lifecycle"
+	"github.com/GuinsooLab/annastore/internal/hash"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/dustin/go-humanize"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/bucket/lifecycle"
-	"github.com/minio/minio/internal/hash"
-	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/console"
 	"github.com/minio/pkg/env"
 )
@@ -457,7 +457,7 @@ func (p *poolMeta) updateAfter(ctx context.Context, idx int, pools []*erasureSet
 	now := UTCNow()
 	if now.Sub(p.Pools[idx].LastUpdate) >= duration {
 		if serverDebugLog {
-			console.Debugf("decommission: persisting poolMeta on disk: threshold:%s, poolMeta:%#v\n", now.Sub(p.Pools[idx].LastUpdate), p.Pools[idx])
+			console.Debugf("decommission: persisting poolMeta on drive: threshold:%s, poolMeta:%#v\n", now.Sub(p.Pools[idx].LastUpdate), p.Pools[idx])
 		}
 		p.Pools[idx].LastUpdate = now
 		if err := p.save(ctx, pools); err != nil {
@@ -677,7 +677,7 @@ func (z *erasureServerPools) decommissionPool(ctx context.Context, idx int, pool
 		set := set
 		disks := set.getOnlineDisks()
 		if len(disks) == 0 {
-			logger.LogIf(GlobalContext, fmt.Errorf("no online disks found for set with endpoints %s",
+			logger.LogIf(GlobalContext, fmt.Errorf("no online drives found for set with endpoints %s",
 				set.getEndpoints()))
 			continue
 		}

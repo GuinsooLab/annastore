@@ -17,7 +17,7 @@
 
 package etcd
 
-import "github.com/minio/minio/internal/config"
+import "github.com/GuinsooLab/annastore/internal/config"
 
 // etcd config documented in default config
 var (

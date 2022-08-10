@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
 	"github.com/minio/madmin-go"
 	minio "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -40,7 +41,6 @@ import (
 	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"github.com/minio/minio-go/v7/pkg/set"
 	"github.com/minio/minio-go/v7/pkg/signer"
-	"github.com/minio/minio/internal/auth"
 )
 
 const (

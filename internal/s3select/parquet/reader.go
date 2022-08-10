@@ -22,11 +22,11 @@ import (
 	"io"
 	"time"
 
+	jsonfmt "github.com/GuinsooLab/annastore/internal/s3select/json"
+	"github.com/GuinsooLab/annastore/internal/s3select/sql"
 	"github.com/bcicen/jstream"
 	parquetgo "github.com/fraugster/parquet-go"
 	parquettypes "github.com/fraugster/parquet-go/parquet"
-	jsonfmt "github.com/minio/minio/internal/s3select/json"
-	"github.com/minio/minio/internal/s3select/sql"
 )
 
 // Reader implements reading records from parquet input.

@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"crypto"
 	"crypto/tls"
 	"encoding/hex"
@@ -36,8 +37,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/minio/pkg/env"
 	xnet "github.com/minio/pkg/net"
 	"github.com/minio/selfupdate"
@@ -180,7 +181,7 @@ func IsBOSH() bool {
 // Check if this is Helm package installation and report helm chart version
 func getHelmVersion(helmInfoFilePath string) string {
 	// Read the file exists.
-	helmInfoFile, err := os.Open(helmInfoFilePath)
+	helmInfoFile, err := Open(helmInfoFilePath)
 	if err != nil {
 		// Log errors and return "" as MinIO can be deployed
 		// without Helm charts as well.
@@ -291,63 +292,50 @@ func getUserAgent(mode string) string {
 }
 
 func downloadReleaseURL(u *url.URL, timeout time.Duration, mode string) (content string, err error) {
-	var reader io.ReadCloser
-	if u.Scheme == "https" || u.Scheme == "http" {
-		req, err := http.NewRequest(http.MethodGet, u.String(), nil)
-		if err != nil {
-			return content, AdminError{
-				Code:       AdminUpdateUnexpectedFailure,
-				Message:    err.Error(),
-				StatusCode: http.StatusInternalServerError,
-			}
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	if err != nil {
+		return content, AdminError{
+			Code:       AdminUpdateUnexpectedFailure,
+			Message:    err.Error(),
+			StatusCode: http.StatusInternalServerError,
 		}
-		req.Header.Set("User-Agent", getUserAgent(mode))
+	}
+	req.Header.Set("User-Agent", getUserAgent(mode))
 
-		client := &http.Client{Transport: getUpdateTransport(timeout)}
-		resp, err := client.Do(req)
-		if err != nil {
-			if xnet.IsNetworkOrHostDown(err, false) {
-				return content, AdminError{
-					Code:       AdminUpdateURLNotReachable,
-					Message:    err.Error(),
-					StatusCode: http.StatusServiceUnavailable,
-				}
-			}
-			return content, AdminError{
-				Code:       AdminUpdateUnexpectedFailure,
-				Message:    err.Error(),
-				StatusCode: http.StatusInternalServerError,
-			}
-		}
-		if resp == nil {
-			return content, AdminError{
-				Code:       AdminUpdateUnexpectedFailure,
-				Message:    fmt.Sprintf("No response from server to download URL %s", u),
-				StatusCode: http.StatusInternalServerError,
-			}
-		}
-		reader = resp.Body
-		defer xhttp.DrainBody(resp.Body)
-
-		if resp.StatusCode != http.StatusOK {
-			return content, AdminError{
-				Code:       AdminUpdateUnexpectedFailure,
-				Message:    fmt.Sprintf("Error downloading URL %s. Response: %v", u, resp.Status),
-				StatusCode: resp.StatusCode,
-			}
-		}
-	} else {
-		reader, err = os.Open(u.Path)
-		if err != nil {
+	client := &http.Client{Transport: getUpdateTransport(timeout)}
+	resp, err := client.Do(req)
+	if err != nil {
+		if xnet.IsNetworkOrHostDown(err, false) {
 			return content, AdminError{
 				Code:       AdminUpdateURLNotReachable,
 				Message:    err.Error(),
 				StatusCode: http.StatusServiceUnavailable,
 			}
 		}
+		return content, AdminError{
+			Code:       AdminUpdateUnexpectedFailure,
+			Message:    err.Error(),
+			StatusCode: http.StatusInternalServerError,
+		}
+	}
+	if resp == nil {
+		return content, AdminError{
+			Code:       AdminUpdateUnexpectedFailure,
+			Message:    fmt.Sprintf("No response from server to download URL %s", u),
+			StatusCode: http.StatusInternalServerError,
+		}
+	}
+	defer xhttp.DrainBody(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return content, AdminError{
+			Code:       AdminUpdateUnexpectedFailure,
+			Message:    fmt.Sprintf("Error downloading URL %s. Response: %v", u, resp.Status),
+			StatusCode: resp.StatusCode,
+		}
 	}
 
-	contentBytes, err := ioutil.ReadAll(reader)
+	contentBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return content, AdminError{
 			Code:       AdminUpdateUnexpectedFailure,
@@ -518,26 +506,38 @@ func getUpdateReaderFromURL(u *url.URL, transport http.RoundTripper, mode string
 
 var updateInProgress uint32
 
-func downloadBinary(u *url.URL, sha256Sum []byte, releaseInfo string, mode string) (err error) {
+// Function to get the reader from an architecture
+func downloadBinary(u *url.URL, mode string) (readerReturn []byte, err error) {
+	transport := getUpdateTransport(30 * time.Second)
+	var reader io.ReadCloser
+	if u.Scheme == "https" || u.Scheme == "http" {
+		reader, err = getUpdateReaderFromURL(u, transport, mode)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		reader, err = getUpdateReaderFromFile(u)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// convert a Reader to bytes
+	binaryFile, err := ioutil.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	return binaryFile, nil
+}
+
+func verifyBinary(u *url.URL, sha256Sum []byte, releaseInfo string, mode string, reader []byte) (err error) {
 	if !atomic.CompareAndSwapUint32(&updateInProgress, 0, 1) {
 		return errors.New("update already in progress")
 	}
 	defer atomic.StoreUint32(&updateInProgress, 0)
 
 	transport := getUpdateTransport(30 * time.Second)
-	var reader io.ReadCloser
-	if u.Scheme == "https" || u.Scheme == "http" {
-		reader, err = getUpdateReaderFromURL(u, transport, mode)
-		if err != nil {
-			return err
-		}
-	} else {
-		reader, err = getUpdateReaderFromFile(u)
-		if err != nil {
-			return err
-		}
-	}
-
 	opts := selfupdate.Options{
 		Hash:     crypto.SHA256,
 		Checksum: sha256Sum,
@@ -565,7 +565,7 @@ func downloadBinary(u *url.URL, sha256Sum []byte, releaseInfo string, mode strin
 		opts.Verifier = v
 	}
 
-	if err = selfupdate.PrepareAndCheckBinary(reader, opts); err != nil {
+	if err = selfupdate.PrepareAndCheckBinary(bytes.NewReader(reader), opts); err != nil {
 		var pathErr *os.PathError
 		if errors.As(err, &pathErr) {
 			return AdminError{

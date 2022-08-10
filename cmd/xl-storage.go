@@ -35,14 +35,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/bucket/lifecycle"
+	"github.com/GuinsooLab/annastore/internal/color"
+	"github.com/GuinsooLab/annastore/internal/disk"
+	xioutil "github.com/GuinsooLab/annastore/internal/ioutil"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/dustin/go-humanize"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/bucket/lifecycle"
-	"github.com/minio/minio/internal/color"
-	"github.com/minio/minio/internal/disk"
-	xioutil "github.com/minio/minio/internal/ioutil"
-	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/console"
 	"github.com/yargevad/filepathx"
 )
@@ -394,7 +394,7 @@ func (s *xlStorage) readMetadataWithDMTime(ctx context.Context, itemPath string)
 		return nil, time.Time{}, err
 	}
 
-	f, err := OpenFile(itemPath, readMode, 0)
+	f, err := OpenFile(itemPath, readMode, 0o666)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -751,18 +751,24 @@ func (s *xlStorage) MakeVol(ctx context.Context, volume string) error {
 }
 
 // ListVols - list volumes.
-func (s *xlStorage) ListVols(context.Context) (volsInfo []VolInfo, err error) {
-	return listVols(s.diskPath)
+func (s *xlStorage) ListVols(ctx context.Context) (volsInfo []VolInfo, err error) {
+	return listVols(ctx, s.diskPath)
 }
 
 // List all the volumes from diskPath.
-func listVols(dirPath string) ([]VolInfo, error) {
+func listVols(ctx context.Context, dirPath string) ([]VolInfo, error) {
 	if err := checkPathLength(dirPath); err != nil {
 		return nil, err
 	}
 	entries, err := readDir(dirPath)
 	if err != nil {
-		return nil, errDiskNotFound
+		logger.LogIf(ctx, err)
+		if errors.Is(err, errFileAccessDenied) {
+			return nil, errDiskAccessDenied
+		} else if errors.Is(err, errFileNotFound) {
+			return nil, errDiskNotFound
+		}
+		return nil, err
 	}
 	volsInfo := make([]VolInfo, 0, len(entries))
 	for _, entry := range entries {
@@ -1547,7 +1553,7 @@ func (s *xlStorage) ReadFile(ctx context.Context, volume string, path string, of
 	}
 
 	// Open the file for reading.
-	file, err := Open(filePath)
+	file, err := OpenFile(filePath, readMode, 0o666)
 	if err != nil {
 		switch {
 		case osIsNotExist(err):
@@ -2515,7 +2521,7 @@ func (s *xlStorage) RenameFile(ctx context.Context, srcVolume, srcPath, dstVolum
 
 func (s *xlStorage) bitrotVerify(ctx context.Context, partPath string, partSize int64, algo BitrotAlgorithm, sum []byte, shardSize int64) error {
 	// Open the file for reading.
-	file, err := Open(partPath)
+	file, err := OpenFile(partPath, readMode, 0o666)
 	if err != nil {
 		return osErrToFileErr(err)
 	}

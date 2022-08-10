@@ -28,8 +28,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/beevik/ntp"
-	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/env"
 )
 

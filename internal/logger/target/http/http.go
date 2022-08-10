@@ -28,8 +28,8 @@ import (
 	"sync"
 	"time"
 
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger/target/types"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger/target/types"
 )
 
 // Timeout for the webhook http call

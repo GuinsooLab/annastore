@@ -32,14 +32,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
+	sreplication "github.com/GuinsooLab/annastore/internal/bucket/replication"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/minio/madmin-go"
 	minioClient "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio-go/v7/pkg/replication"
 	"github.com/minio/minio-go/v7/pkg/set"
-	"github.com/minio/minio/internal/auth"
-	sreplication "github.com/minio/minio/internal/bucket/replication"
-	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/bucket/policy"
 	bktpolicy "github.com/minio/pkg/bucket/policy"
 	iampolicy "github.com/minio/pkg/iam/policy"
@@ -542,7 +542,7 @@ func (c *SiteReplicationSys) PeerJoinReq(ctx context.Context, arg madmin.SRPeerJ
 		ServiceAccountAccessKey: arg.SvcAcctAccessKey,
 	}
 	if err = c.saveToDisk(ctx, state); err != nil {
-		return errSRBackendIssue(fmt.Errorf("unable to save cluster-replication state to disk on %s: %v", ourName, err))
+		return errSRBackendIssue(fmt.Errorf("unable to save cluster-replication state to drive on %s: %v", ourName, err))
 	}
 	return nil
 }
@@ -1103,6 +1103,9 @@ func (c *SiteReplicationSys) PeerGroupInfoChangeHandler(ctx context.Context, cha
 			_, err = globalIAMSys.SetGroupStatus(ctx, updReq.Group, updReq.Status == madmin.GroupEnabled)
 		} else {
 			_, err = globalIAMSys.AddUsersToGroup(ctx, updReq.Group, updReq.Members)
+			if err == nil && updReq.Status != madmin.GroupEnabled {
+				_, err = globalIAMSys.SetGroupStatus(ctx, updReq.Group, updReq.Status == madmin.GroupEnabled)
+			}
 		}
 	}
 	if err != nil {
@@ -2143,7 +2146,7 @@ func (c *SiteReplicationSys) InternalRemoveReq(ctx context.Context, objectAPI Ob
 	}
 
 	if err := c.saveToDisk(ctx, state); err != nil {
-		return errSRBackendIssue(fmt.Errorf("unable to save cluster-replication state to disk on %s: %v", ourName, err))
+		return errSRBackendIssue(fmt.Errorf("unable to save cluster-replication state to drive on %s: %v", ourName, err))
 	}
 	return nil
 }
@@ -2210,7 +2213,10 @@ func (c *SiteReplicationSys) RemoveRemoteTargetsForEndpoint(ctx context.Context,
 // Other helpers
 
 func getAdminClient(endpoint, accessKey, secretKey string) (*madmin.AdminClient, error) {
-	epURL, _ := url.Parse(endpoint)
+	epURL, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, err
+	}
 	client, err := madmin.New(epURL.Host, accessKey, secretKey, epURL.Scheme == "https")
 	if err != nil {
 		return nil, err
@@ -3492,7 +3498,7 @@ func (c *SiteReplicationSys) PeerEditReq(ctx context.Context, arg madmin.PeerInf
 		}
 	}
 	if err := c.saveToDisk(ctx, c.state); err != nil {
-		return errSRBackendIssue(fmt.Errorf("unable to save cluster-replication state to disk on %s: %v", ourName, err))
+		return errSRBackendIssue(fmt.Errorf("unable to save cluster-replication state to drive on %s: %v", ourName, err))
 	}
 	return nil
 }
@@ -4680,7 +4686,6 @@ func (c *SiteReplicationSys) healGroups(ctx context.Context, objAPI ObjectLayer,
 			continue
 		}
 		peerName := info.Sites[dID].Name
-
 		if err := c.IAMChangeHook(ctx, madmin.SRIAMItem{
 			Type: madmin.SRIAMItemGroupInfo,
 			GroupInfo: &madmin.SRGroupInfo{

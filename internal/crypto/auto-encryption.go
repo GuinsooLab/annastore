@@ -18,7 +18,7 @@
 package crypto
 
 import (
-	"github.com/minio/minio/internal/config"
+	"github.com/GuinsooLab/annastore/internal/config"
 	"github.com/minio/pkg/env"
 )
 

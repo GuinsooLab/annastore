@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minio/minio/internal/bucket/lifecycle"
+	"github.com/GuinsooLab/annastore/internal/bucket/lifecycle"
 )
 
 func (x xlMetaV2) listFreeVersions(volume, path string) ([]FileInfo, error) {

@@ -29,12 +29,12 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/GuinsooLab/annastore/internal/config"
+	xhttp "github.com/GuinsooLab/annastore/internal/http"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/gorilla/mux"
 	"github.com/minio/cli"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/config"
-	xhttp "github.com/minio/minio/internal/http"
-	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/certs"
 	"github.com/minio/pkg/env"
 )
@@ -323,7 +323,7 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 		// initialize the new disk cache objects.
 		var cacheAPI CacheObjectLayer
 		cacheAPI, err = newServerCacheObjects(GlobalContext, globalCacheConfig)
-		logger.FatalIf(err, "Unable to initialize disk caching")
+		logger.FatalIf(err, "Unable to initialize drive caching")
 
 		globalObjLayerMutex.Lock()
 		globalCacheObjectAPI = cacheAPI

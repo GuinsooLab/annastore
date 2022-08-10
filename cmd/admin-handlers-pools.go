@@ -22,8 +22,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"github.com/gorilla/mux"
-	"github.com/minio/minio/internal/logger"
 	iampolicy "github.com/minio/pkg/iam/policy"
 )
 

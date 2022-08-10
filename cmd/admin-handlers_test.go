@@ -30,9 +30,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GuinsooLab/annastore/internal/auth"
 	"github.com/gorilla/mux"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/auth"
 )
 
 // adminErasureTestBed - encapsulates subsystems that need to be setup for

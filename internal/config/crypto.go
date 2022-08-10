@@ -26,9 +26,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/GuinsooLab/annastore/internal/fips"
+	"github.com/GuinsooLab/annastore/internal/kms"
 	jsoniter "github.com/json-iterator/go"
-	"github.com/minio/minio/internal/fips"
-	"github.com/minio/minio/internal/kms"
 	"github.com/secure-io/sio-go"
 	"github.com/secure-io/sio-go/sioutil"
 )

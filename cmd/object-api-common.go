@@ -22,8 +22,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/GuinsooLab/annastore/internal/sync/errgroup"
 	"github.com/dustin/go-humanize"
-	"github.com/minio/minio/internal/sync/errgroup"
 )
 
 const (
