@@ -115,20 +115,20 @@ FLAGS:
   {{range .VisibleFlags}}{{.}}
   {{end}}{{end}}
 EXAMPLES:
-  1. Start minio server on "/home/shared" directory.
+  1. Start annastore server on "/home/shared" directory.
      {{.Prompt}} {{.HelpName}} /home/shared
 
   2. Start single node server with 64 local drives "/mnt/data1" to "/mnt/data64".
      {{.Prompt}} {{.HelpName}} /mnt/data{1...64}
 
-  3. Start distributed minio server on an 32 node setup with 32 drives each, run following command on all the nodes
-     {{.Prompt}} {{.EnvVarSetCommand}} MINIO_ROOT_USER{{.AssignmentOperator}}minio
-     {{.Prompt}} {{.EnvVarSetCommand}} MINIO_ROOT_PASSWORD{{.AssignmentOperator}}miniostorage
+  3. Start distributed annastore server on an 32 node setup with 32 drives each, run following command on all the nodes
+     {{.Prompt}} {{.EnvVarSetCommand}} ANNASTORE_ROOT_USER{{.AssignmentOperator}}annastore
+     {{.Prompt}} {{.EnvVarSetCommand}} ANNASTORE_ROOT_PASSWORD{{.AssignmentOperator}}annastorestorage
      {{.Prompt}} {{.HelpName}} http://node{1...32}.example.com/mnt/export{1...32}
 
-  4. Start distributed minio server in an expanded setup, run the following command on all the nodes
-     {{.Prompt}} {{.EnvVarSetCommand}} MINIO_ROOT_USER{{.AssignmentOperator}}minio
-     {{.Prompt}} {{.EnvVarSetCommand}} MINIO_ROOT_PASSWORD{{.AssignmentOperator}}miniostorage
+  4. Start distributed annastore server in an expanded setup, run the following command on all the nodes
+     {{.Prompt}} {{.EnvVarSetCommand}} ANNASTORE_ROOT_USER{{.AssignmentOperator}}annastore
+     {{.Prompt}} {{.EnvVarSetCommand}} ANNASTORE_ROOT_PASSWORD{{.AssignmentOperator}}annastorestorage
      {{.Prompt}} {{.HelpName}} http://node{1...16}.example.com/mnt/export{1...32} \
             http://node{17...64}.example.com/mnt/export{1...64}
 `,
@@ -375,7 +375,7 @@ func initServer(ctx context.Context, newObject ObjectLayer) error {
 				// All successful return.
 				if globalIsDistErasure {
 					// These messages only meant primarily for distributed setup, so only log during distributed setup.
-					logger.Info("All MinIO sub-systems initialized successfully in %s", time.Since(t1))
+					logger.Info("All AnnaStore sub-systems initialized successfully in %s", time.Since(t1))
 				}
 				return nil
 			}
@@ -385,7 +385,7 @@ func initServer(ctx context.Context, newObject ObjectLayer) error {
 		txnLk.Unlock(lkctx.Cancel)
 
 		if configRetriableErrors(err) {
-			logger.Info("Waiting for all MinIO sub-systems to be initialized.. possible cause (%v)", err)
+			logger.Info("Waiting for all AnnaStore sub-systems to be initialized.. possible cause (%v)", err)
 			time.Sleep(time.Duration(r.Float64() * float64(5*time.Second)))
 			continue
 		}
@@ -415,7 +415,7 @@ func initConfigSubsystem(ctx context.Context, newObject ObjectLayer) error {
 	return nil
 }
 
-// serverMain handler called for 'minio server' command.
+// serverMain handler called for 'annastore server' command.
 func serverMain(ctx *cli.Context) {
 	signal.Notify(globalOSSignalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 
@@ -483,7 +483,7 @@ func serverMain(ctx *cli.Context) {
 	maxProcs := runtime.GOMAXPROCS(0)
 	cpuProcs := runtime.NumCPU()
 	if maxProcs < cpuProcs {
-		logger.Info(color.RedBold("WARNING: Detected GOMAXPROCS(%d) < NumCPU(%d), please make sure to provide all PROCS to MinIO for optimal performance", maxProcs, cpuProcs))
+		logger.Info(color.RedBold("WARNING: Detected GOMAXPROCS(%d) < NumCPU(%d), please make sure to provide all PROCS to AnnaStore for optimal performance", maxProcs, cpuProcs))
 	}
 
 	// Configure server.
@@ -542,7 +542,7 @@ func serverMain(ctx *cli.Context) {
 	initBackgroundExpiry(GlobalContext, newObject)
 
 	if globalActiveCred.Equal(auth.DefaultCredentials) {
-		msg := fmt.Sprintf("WARNING: Detected default credentials '%s', we recommend that you change these values with 'MINIO_ROOT_USER' and 'MINIO_ROOT_PASSWORD' environment variables",
+		msg := fmt.Sprintf("WARNING: Detected default credentials '%s', we recommend that you change these values with 'ANNASTORE_ROOT_USER' and 'ANNASTORE_ROOT_PASSWORD' environment variables",
 			globalActiveCred)
 		logger.Info(color.RedBold(msg))
 	}
@@ -631,7 +631,7 @@ func serverMain(ctx *cli.Context) {
 
 		// initialize the new disk cache objects.
 		if globalCacheConfig.Enabled {
-			logger.Info(color.Yellow("WARNING: Drive caching is deprecated for single/multi drive MinIO setups. Please migrate to using MinIO S3 gateway instead of drive caching"))
+			logger.Info(color.Yellow("WARNING: Drive caching is deprecated for single/multi drive AnnaStore setups. Please migrate to using AnnaStore S3 gateway instead of drive caching"))
 			var cacheAPI CacheObjectLayer
 			cacheAPI, err = newServerCacheObjects(GlobalContext, globalCacheConfig)
 			logger.FatalIf(err, "Unable to initialize drive caching")
@@ -653,7 +653,7 @@ func serverMain(ctx *cli.Context) {
 		Transport: globalProxyTransport,
 		Region:    region,
 	})
-	logger.FatalIf(err, "Unable to initialize MinIO client")
+	logger.FatalIf(err, "Unable to initialize AnnaStore client")
 
 	if serverDebugLog {
 		logger.Info("== DEBUG Mode enabled ==")
