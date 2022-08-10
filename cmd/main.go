@@ -140,10 +140,10 @@ func newApp(name string) *cli.App {
 
 	app := cli.NewApp()
 	app.Name = name
-	app.Author = "MinIO, Inc."
+	app.Author = "GuinsooLab Annastore"
 	app.Version = ReleaseTag
 	app.Usage = "High Performance Object Storage"
-	app.Description = `Build high performance data infrastructure for machine learning, analytics and application data workloads with MinIO`
+	app.Description = `Build high performance data infrastructure for machine learning, analytics and application data workloads with Annastore`
 	app.Flags = GlobalFlags
 	app.HideHelpCommand = true // Hide `help, h` command, we already have `minio --help`.
 	app.Commands = commands
@@ -166,7 +166,7 @@ func newApp(name string) *cli.App {
 }
 
 func startupBanner(banner io.Writer) {
-	fmt.Fprintln(banner, color.Blue("Copyright:")+color.Bold(" 2015-%s MinIO, Inc.", CopyrightYear))
+	fmt.Fprintln(banner, color.Blue("Copyright:")+color.Bold(" 2022 GuinsooLab Annastore", CopyrightYear))
 	fmt.Fprintln(banner, color.Blue("License:")+color.Bold(" GNU AGPLv3 <https://www.gnu.org/licenses/agpl-3.0.html>"))
 	fmt.Fprintln(banner, color.Blue("Version:")+color.Bold(" %s (%s %s/%s)", ReleaseTag, runtime.Version(), runtime.GOOS, runtime.GOARCH))
 }
@@ -176,7 +176,7 @@ func versionBanner(c *cli.Context) io.Reader {
 	fmt.Fprintln(banner, color.Bold("%s version %s (commit-id=%s)", c.App.Name, c.App.Version, CommitID))
 	fmt.Fprintln(banner, color.Blue("Runtime:")+color.Bold(" %s %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH))
 	fmt.Fprintln(banner, color.Blue("License:")+color.Bold(" GNU AGPLv3 <https://www.gnu.org/licenses/agpl-3.0.html>"))
-	fmt.Fprintln(banner, color.Blue("Copyright:")+color.Bold(" 2015-%s MinIO, Inc.", CopyrightYear))
+	fmt.Fprintln(banner, color.Blue("Copyright:")+color.Bold(" 2022 GuinsooLab Annastore", CopyrightYear))
 	return strings.NewReader(banner.String())
 }
 
@@ -184,9 +184,9 @@ func printMinIOVersion(c *cli.Context) {
 	io.Copy(c.App.Writer, versionBanner(c))
 }
 
-// Main main for minio server.
+// Main main for annastore server.
 func Main(args []string) {
-	// Set the minio app name.
+	// Set the store app name.
 	appName := filepath.Base(args[0])
 
 	// Run the app - exit on error.
