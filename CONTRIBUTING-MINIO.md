@@ -1,26 +1,26 @@
-# AnnaStore Contribution Guide
+# MinIO Contribution Guide [![Slack](https://slack.min.io/slack?type=svg)](https://slack.min.io) [![Docker Pulls](https://img.shields.io/docker/pulls/minio/minio.svg?maxAge=604800)](https://hub.docker.com/r/minio/minio/)
 
-``AnnaStore`` community welcomes your contribution. To make the process as seamless as possible, we recommend you read this contribution guide.
+``MinIO`` community welcomes your contribution. To make the process as seamless as possible, we recommend you read this contribution guide.
 
 ## Development Workflow
 
 Start by forking the MinIO GitHub repository, make changes in a branch and then send a pull request. We encourage pull requests to discuss code changes. Here are the steps in details:
 
-### Setup your AnnaStore GitHub Repository
+### Setup your MinIO GitHub Repository
 
-Fork AnnaStore source repository to your own personal repository. Copy the URL of your MinIO fork (you will need it for the `git clone` command below).
+Fork [MinIO upstream](https://github.com/minio/minio/fork) source repository to your own personal repository. Copy the URL of your MinIO fork (you will need it for the `git clone` command below).
 
 ```sh
-git clone https://github.com/GuinsooLab/annastore.git
+git clone https://github.com/minio/minio
 go install -v
-ls /go/bin/annastore
+ls /go/bin/minio
 ```
 
 ### Set up git remote as ``upstream``
 
 ```sh
-$ cd annastore
-$ git remote add upstream https://github.com/GuinsooLab/annastore
+$ cd minio
+$ git remote add upstream https://github.com/minio/minio
 $ git fetch upstream
 $ git merge upstream/master
 ...
@@ -34,11 +34,11 @@ Before making code changes, make sure you create a separate branch for these cha
 git checkout -b my-new-feature
 ```
 
-### Test AnnaStore server changes
+### Test MinIO server changes
 
 After your code changes, make sure
 
-- To add test cases for the new code. If you have questions about how to do it, please [email](bqjimaster@gmail.com) to me.
+- To add test cases for the new code. If you have questions about how to do it, please ask on our [Slack](https://slack.min.io) channel.
 - To run `make verifiers`
 - To squash your commits into a single commit. `git rebase -i`. It's okay to force update your pull request.
 - To run `make test` and `make build` completes.
@@ -65,9 +65,9 @@ Pull requests can be created via GitHub. Refer to [this document](https://help.g
 
 ## FAQs
 
-### How does ``AnnaStore`` manage dependencies?
+### How does ``MinIO`` manage dependencies?
 
-``AnnaStore`` uses `go mod` to manage its dependencies.
+``MinIO`` uses `go mod` to manage its dependencies.
 
 - Run `go get foo/bar` in the source folder to add the dependency to `go.mod` file.
 
@@ -78,4 +78,4 @@ To remove a dependency
 
 ### What are the coding guidelines for MinIO?
 
-``AnnaStore`` is fully conformant with Golang style. Refer: [Effective Go](https://github.com/golang/go/wiki/CodeReviewComments) article from Golang project. If you observe offending code, please feel free to send a pull request 🚀.
+``MinIO`` is fully conformant with Golang style. Refer: [Effective Go](https://github.com/golang/go/wiki/CodeReviewComments) article from Golang project. If you observe offending code, please feel free to send a pull request or ping us on [Slack](https://slack.min.io).
