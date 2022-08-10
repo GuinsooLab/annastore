@@ -1,6 +1,6 @@
-// Copyright (c) 2015-2021 MinIO, Inc.
+// Copyright (c) 2022 GuinsooLab
 //
-// This file is part of MinIO Object Storage stack
+// This file is part of GuinsooLab stack
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -31,7 +31,7 @@ func TestNewObjectLayer(t *testing.T) {
 	nDisks := 1
 	disks, err := getRandomDisks(nDisks)
 	if err != nil {
-		t.Fatal("Failed to create disks for the backend")
+		t.Fatal("Failed to create drives for the backend")
 	}
 	defer removeRoots(disks)
 
@@ -50,7 +50,7 @@ func TestNewObjectLayer(t *testing.T) {
 	nDisks = 16
 	disks, err = getRandomDisks(nDisks)
 	if err != nil {
-		t.Fatal("Failed to create disks for the backend")
+		t.Fatal("Failed to create drives for the backend")
 	}
 	defer removeRoots(disks)
 

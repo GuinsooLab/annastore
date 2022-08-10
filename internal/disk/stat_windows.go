@@ -1,9 +1,9 @@
 //go:build windows
 // +build windows
 
-// Copyright (c) 2015-2021 MinIO, Inc.
+// Copyright (c) 2022 GuinsooLab
 //
-// This file is part of MinIO Object Storage stack
+// This file is part of GuinsooLab stack
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -70,7 +70,7 @@ func GetInfo(path string) (info Info, err error) {
 		uintptr(unsafe.Pointer(&lpTotalNumberOfFreeBytes)))
 
 	if uint64(lpTotalNumberOfFreeBytes) > uint64(lpTotalNumberOfBytes) {
-		return info, fmt.Errorf("detected free space (%d) > total disk space (%d), fs corruption at (%s). please run 'fsck'",
+		return info, fmt.Errorf("detected free space (%d) > total drive space (%d), fs corruption at (%s). please run 'fsck'",
 			uint64(lpTotalNumberOfFreeBytes), uint64(lpTotalNumberOfBytes), path)
 	}
 

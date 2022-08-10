@@ -1,9 +1,9 @@
 //go:build (linux && arm) || (linux && 386)
 // +build linux,arm linux,386
 
-// Copyright (c) 2015-2021 MinIO, Inc.
+// Copyright (c) 2022 GuinsooLab
 //
-// This file is part of MinIO Object Storage stack
+// This file is part of GuinsooLab stack
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -76,7 +76,7 @@ func GetInfo(path string) (info Info, err error) {
 	// XFS can show wrong values at times error out
 	// in such scenarios.
 	if info.Free > info.Total {
-		return info, fmt.Errorf("detected free space (%d) > total disk space (%d), fs corruption at (%s). please run 'fsck'", info.Free, info.Total, path)
+		return info, fmt.Errorf("detected free space (%d) > total drive space (%d), fs corruption at (%s). please run 'fsck'", info.Free, info.Total, path)
 	}
 	info.Used = info.Total - info.Free
 	return info, nil

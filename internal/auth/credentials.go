@@ -1,6 +1,6 @@
-// Copyright (c) 2015-2021 MinIO, Inc.
+// Copyright (c) 2022 GuinsooLab
 //
-// This file is part of MinIO Object Storage stack
+// This file is part of GuinsooLab stack
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -73,11 +73,11 @@ func IsSecretKeyValid(secretKey string) bool {
 
 // Default access and secret keys.
 const (
-	DefaultAccessKey = "minioadmin"
-	DefaultSecretKey = "minioadmin"
+	DefaultAccessKey = "guinsoolab"
+	DefaultSecretKey = "guinsoolab123"
 )
 
-// Default access credentials
+// DefaultCredentials Default access credentials
 var (
 	DefaultCredentials = Credentials{
 		AccessKey: DefaultAccessKey,

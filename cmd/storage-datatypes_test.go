@@ -1,6 +1,6 @@
-// Copyright (c) 2015-2021 MinIO, Inc.
+// Copyright (c) 2022 GuinsooLab
 //
-// This file is part of MinIO Object Storage stack
+// This file is part of GuinsooLab stack
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -56,8 +56,8 @@ func BenchmarkDecodeDiskInfoMsgp(b *testing.B) {
 		FSType:    "xfs",
 		RootDisk:  true,
 		Healing:   true,
-		Endpoint:  "http://localhost:9001/tmp/disk1",
-		MountPath: "/tmp/disk1",
+		Endpoint:  "http://localhost:9001/tmp/drive1",
+		MountPath: "/tmp/drive1",
 		ID:        "uuid",
 		Error:     "",
 	}
@@ -85,8 +85,8 @@ func BenchmarkDecodeDiskInfoGOB(b *testing.B) {
 		FSType:    "xfs",
 		RootDisk:  true,
 		Healing:   true,
-		Endpoint:  "http://localhost:9001/tmp/disk1",
-		MountPath: "/tmp/disk1",
+		Endpoint:  "http://localhost:9001/tmp/drive1",
+		MountPath: "/tmp/drive1",
 		ID:        "uuid",
 		Error:     "",
 	}
@@ -115,8 +115,8 @@ func BenchmarkEncodeDiskInfoMsgp(b *testing.B) {
 		FSType:    "xfs",
 		RootDisk:  true,
 		Healing:   true,
-		Endpoint:  "http://localhost:9001/tmp/disk1",
-		MountPath: "/tmp/disk1",
+		Endpoint:  "http://localhost:9001/tmp/drive1",
+		MountPath: "/tmp/drive1",
 		ID:        "uuid",
 		Error:     "",
 	}
@@ -140,8 +140,8 @@ func BenchmarkEncodeDiskInfoGOB(b *testing.B) {
 		FSType:    "xfs",
 		RootDisk:  true,
 		Healing:   true,
-		Endpoint:  "http://localhost:9001/tmp/disk1",
-		MountPath: "/tmp/disk1",
+		Endpoint:  "http://localhost:9001/tmp/drive1",
+		MountPath: "/tmp/drive1",
 		ID:        "uuid",
 		Error:     "",
 	}

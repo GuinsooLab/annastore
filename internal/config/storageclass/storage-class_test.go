@@ -1,6 +1,6 @@
-// Copyright (c) 2015-2021 MinIO, Inc.
+// Copyright (c) 2022 GuinsooLab
 //
-// This file is part of MinIO Object Storage stack
+// This file is part of GuinsooLab stack
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -158,11 +158,11 @@ func TestParityCount(t *testing.T) {
 		}
 		parity := scfg.GetParityForSC(tt.sc)
 		if (tt.disksCount - parity) != tt.expectedData {
-			t.Errorf("Test %d, Expected data disks %d, got %d", i+1, tt.expectedData, tt.disksCount-parity)
+			t.Errorf("Test %d, Expected data drives %d, got %d", i+1, tt.expectedData, tt.disksCount-parity)
 			continue
 		}
 		if parity != tt.expectedParity {
-			t.Errorf("Test %d, Expected parity disks %d, got %d", i+1, tt.expectedParity, parity)
+			t.Errorf("Test %d, Expected parity drives %d, got %d", i+1, tt.expectedParity, parity)
 		}
 	}
 }

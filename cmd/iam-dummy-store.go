@@ -1,6 +1,6 @@
-// Copyright (c) 2015-2021 MinIO, Inc.
+// Copyright (c) 2022 GuinsooLab
 //
-// This file is part of MinIO Object Storage stack
+// This file is part of GuinsooLab stack
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -55,10 +55,6 @@ func (ids *iamDummyStore) unlock() {
 
 func (ids *iamDummyStore) getUsersSysType() UsersSysType {
 	return ids.usersSysType
-}
-
-func (ids *iamDummyStore) migrateBackendFormat(context.Context) error {
-	return nil
 }
 
 func (ids *iamDummyStore) loadPolicyDoc(ctx context.Context, policy string, m map[string]PolicyDoc) error {
