@@ -10,9 +10,13 @@
 
 # AnnaStore
 
-[AnnaStore Overview](https://ciusji.gitbook.io/guinsoolab/products/data-storage/overview) | 
-[AnnaStore on GuinsooLab](https://guinsoolab.github.io/glab) | 
-[AnnaStore Integrations](https://ciusji.gitbook.io/guinsoolab/products/data-storage/integrations)
+[Overview](https://ciusji.gitbook.io/guinsoolab/products/data-storage/overview) | 
+[Quickstart](https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/quickstart) | 
+[Deployment & Management](https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/deployment-and-management) |
+[Integrations](https://ciusji.gitbook.io/guinsoolab/products/data-storage/integrations) | 
+[Monitoring](https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/monitoring) | 
+[Ecosystem](https://guinsoolab.github.io/glab) |
+
 
 For more information, please referrer [GuinsooLab](https://guinsoolab.github.io/glab/).
 
@@ -34,32 +38,31 @@ deliver a range of use cases from AI/ML, analytics, backup/restore and modern we
 
 ## Upgrading AnnaStore
 
-Upgrades require zero downtime in MinIO, all upgrades are non-disruptive, all transactions on MinIO are atomic. So upgrading all the servers simultaneously is the recommended way to upgrade MinIO.
+Upgrades require zero downtime in MinIO, all upgrades are non-disruptive, all transactions on Annastore are atomic. So upgrading all the servers simultaneously is the recommended way to upgrade AnnaStore.
 
-> NOTE: requires internet access to update directly from <https://dl.min.io>, optionally you can host any mirrors at <https://my-artifactory.example.com/minio/>
-
-- For deployments that installed the MinIO server binary by hand, use [`mc admin update`](https://docs.min.io/minio/baremetal/reference/minio-mc-admin/mc-admin-update.html)
+- For deployments that installed the AnnaStore server binary by hand, use [`mc admin update`](https://docs.min.io/minio/baremetal/reference/minio-mc-admin/mc-admin-update.html)
 
 ```sh
-mc admin update <minio alias, e.g., myminio>
+mc admin update <annastore or minio alias, e.g., mystore>
 ```
 
 ## Explore Further
 
 - [MinIO Erasure Code QuickStart Guide](https://docs.min.io/docs/minio-erasure-code-quickstart-guide)
-- [Use `mc` with AnnaStore Server](https://docs.min.io/docs/minio-client-quickstart-guide)
-- [Use `aws-cli` with AnnaStore Server](https://docs.min.io/docs/aws-cli-with-minio)
-- [Use `s3cmd` with AnnaStore Server](https://docs.min.io/docs/s3cmd-with-minio)
-- [Use `minio-go` SDK with AnnaStore Server](https://docs.min.io/docs/golang-client-quickstart-guide)
-- [The MinIO documentation website](https://docs.min.io)
+- [Use `mc` with AnnaStore/MinIO Server](https://docs.min.io/docs/minio-client-quickstart-guide)
+- [Use `aws-cli` with AnnaStore/MinIO Server](https://docs.min.io/docs/aws-cli-with-minio)
+- [Use `s3cmd` with AnnaStore/MinIO Server](https://docs.min.io/docs/s3cmd-with-minio)
+- [Use `minio-go` SDK with AnnaStore/MinIO Server](https://docs.min.io/docs/golang-client-quickstart-guide)
+- [The Annastore documentation website](https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/overview)
+- [The Ecosystem of Annastore](https://ciusji.gitbook.io/guinsoolab/)
 
-## Contribute to MinIO Project
+## Contribute to Annastore Project
 
-Please follow AnnaStore [Contributor's Guide](https://github.com/minio/minio/blob/master/CONTRIBUTING.md)
+Please follow AnnaStore [Contributor's Guide](https://github.com/GuinsooLab/annastore/blob/main/CONTRIBUTING.md)
 
 ## Documentation
 
-[AnnaStore Guide](https://docs.min.io/).
+[AnnaStore Guide](https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/overview).
 
 ## License
 
