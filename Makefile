@@ -106,8 +106,8 @@ verify-healing-inconsistent-versions: ## verify resolving inconsistent versions
 	@(env bash $(PWD)/buildscripts/resolve-right-versions.sh)
 
 build: checks ## builds minio to $(PWD)
-	@echo "Building minio binary to './minio'"
-	@CGO_ENABLED=0 go build -tags kqueue -trimpath --ldflags "$(LDFLAGS)" -o $(PWD)/minio 1>/dev/null
+	@echo "Building annastore binary to './annastore'"
+	@CGO_ENABLED=0 go build -tags kqueue -trimpath --ldflags "$(LDFLAGS)" -o $(PWD)/annastore 1>/dev/null
 
 hotfix-vars:
 	$(eval LDFLAGS := $(shell MINIO_RELEASE="RELEASE" MINIO_HOTFIX="hotfix.$(shell git rev-parse --short HEAD)" go run buildscripts/gen-ldflags.go $(shell git describe --tags --abbrev=0 | \
@@ -137,9 +137,9 @@ docker: build checks ## builds minio docker container
 	@docker build -q --no-cache -t $(TAG) . -f Dockerfile
 
 install: build ## builds minio and installs it to $GOPATH/bin.
-	@echo "Installing minio binary to '$(GOPATH)/bin/minio'"
-	@mkdir -p $(GOPATH)/bin && cp -f $(PWD)/minio $(GOPATH)/bin/minio
-	@echo "Installation successful. To learn more, try \"minio --help\"."
+	@echo "Installing annastore binary to '$(GOPATH)/bin/annastore'"
+	@mkdir -p $(GOPATH)/bin && cp -f $(PWD)/annastore $(GOPATH)/bin/annastore
+	@echo "Installation successful. To learn more, try \"annastore --help\"."
 
 clean: ## cleanup all generated assets
 	@echo "Cleaning up all the generated files"
