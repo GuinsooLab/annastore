@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/GuinsooLab/annastore/internal/logger"
 	"net/http"
 
 	"github.com/GuinsooLab/annastore/internal/arn"
@@ -74,6 +75,7 @@ const (
 // was provided, initialization will return an error initial login fails.
 func (p *providerCfg) initializeProvider(cfgGet func(string) string, transport http.RoundTripper) error {
 	vendor := cfgGet(Vendor)
+	logger.Info("Provider vendor: %s", vendor)
 	if vendor == "" {
 		return nil
 	}
