@@ -567,6 +567,9 @@ func serverMain(ctx *cli.Context) {
 		logger.LogIf(GlobalContext, err)
 	}
 
+	// Initialize users credentials and policies in background right after config has initialized.
+	go globalIAMSys.Init(GlobalContext, newObject, globalEtcdClient, globalRefreshIAMInterval)
+
 	if globalBrowserEnabled {
 		srv, err := initConsoleServer()
 		if err != nil {
@@ -579,9 +582,6 @@ func serverMain(ctx *cli.Context) {
 			logger.FatalIf(newConsoleServerFn().Serve(), "Unable to initialize console server")
 		}()
 	}
-
-	// Initialize users credentials and policies in background right after config has initialized.
-	go globalIAMSys.Init(GlobalContext, newObject, globalEtcdClient, globalRefreshIAMInterval)
 
 	// Background all other operations such as initializing bucket metadata etc.
 	go func() {

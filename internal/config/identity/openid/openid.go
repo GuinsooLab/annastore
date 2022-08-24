@@ -358,6 +358,7 @@ func LookupConfig(s config.Config, transport http.RoundTripper, closeRespFn func
 			return c, config.Errorf("A role policy or claim name must be specified")
 		}
 
+		// Initialize AUTH provider cfg
 		if err = p.initializeProvider(getCfgVal, c.transport); err != nil {
 			return c, err
 		}
