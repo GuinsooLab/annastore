@@ -1,25 +1,16 @@
 <div align="right">
-    <img src="./public/guinsoolab-badge.png" width="60" alt="badge">
+    <img src="https://raw.githubusercontent.com/GuinsooLab/annastore/main/public/guinsoolab-badge.png" width="60" alt="badge">
     <br />
 </div>
 <div align="center">
-    <img src="./public/annaStore.svg" width="120" alt="logo" />
+    <img src="https://raw.githubusercontent.com/GuinsooLab/annastore/main/public/annaStore.svg" width="120" alt="logo" />
     <br/>
-    <small>a high performance object storage system | powered by <a href="https://min.io/">minio</a></small>
+    <small>a high performance object storage system</small>
 </div>
 
-# AnnaStore
+# [AnnaStore](https://ciusji.gitbook.io/annastore/)
 
-[Overview](https://ciusji.gitbook.io/guinsoolab/products/data-storage/overview) | 
-[Quickstart](https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/quickstart) | 
-[Deployment & Management](https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/deployment-and-management) |
-[Integrations](https://ciusji.gitbook.io/guinsoolab/products/data-storage/integrations) | 
-[Monitoring](https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/monitoring) | 
-[Ecosystem](https://guinsoolab.github.io/glab) |
-[FAQ](https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/faq)
-
-
-For more information, please referrer [GuinsooLab](https://guinsoolab.github.io/glab/).
+> High performance OSS storage platform.
 
 ## Introduction
 
@@ -37,13 +28,30 @@ deliver a range of use cases from AI/ML, analytics, backup/restore and modern we
 - The defacto standard for Amazon S3 compatibility 
 - Simply powerful
 
-## Server Console
+## Documentation
 
-![annastore-console](./public/cnosole-annastore.png)
+- [Welcome to AnnaStore!](https://ciusji.gitbook.io/annastore/)
+- Install and Deploy
+  - [Deploy with Docker](https://ciusji.gitbook.io/annastore/install-and-deploy/deploy-with-docker)
+  - [Deploy with Binary package](https://ciusji.gitbook.io/annastore/install-and-deploy/deploy-with-binary-pakcage)
+- Core Concepts
+  - [Erasure Coding](https://ciusji.gitbook.io/annastore/core-concepts/erasure-coding)
+- Monitoring and Alerts
+  - [Metrics and Alerts](https://ciusji.gitbook.io/annastore/monitoring-and-alerts/metrics-and-alerts)
+  - [Health-check API](https://ciusji.gitbook.io/annastore/monitoring-and-alerts/health-check-api)
+- Identity Management
+  - [LDAP](https://ciusji.gitbook.io/annastore/identity-management/ldap)
+  - [OpenID](https://ciusji.gitbook.io/annastore/identity-management/openid)
+- Reference
+  - [AnnaStore Client](https://ciusji.gitbook.io/annastore/reference/annastore-client)
+  - [AnnaStore Server](https://ciusji.gitbook.io/annastore/reference/annastore-server)
+  - [Integrations](https://ciusji.gitbook.io/annastore/reference/integrations)
+- Appendix
+  - [FAQ](https://ciusji.gitbook.io/annastore/appendix/faq)
 
 ## Upgrading AnnaStore
 
-Upgrades require zero downtime in MinIO, all upgrades are non-disruptive, all transactions on Annastore are atomic. So upgrading all the servers simultaneously is the recommended way to upgrade AnnaStore.
+Upgrades require zero downtime in AnnaStore, all upgrades are non-disruptive, all transactions on AnnaStore are atomic. So upgrading all the servers simultaneously is the recommended way to upgrade AnnaStore.
 
 - For deployments that installed the AnnaStore server binary by hand, use [`mc admin update`](https://docs.min.io/minio/baremetal/reference/minio-mc-admin/mc-admin-update.html)
 
@@ -58,16 +66,12 @@ mc admin update <annastore or minio alias, e.g., mystore>
 - [Use `aws-cli` with AnnaStore/MinIO Server](https://docs.min.io/docs/aws-cli-with-minio)
 - [Use `s3cmd` with AnnaStore/MinIO Server](https://docs.min.io/docs/s3cmd-with-minio)
 - [Use `minio-go` SDK with AnnaStore/MinIO Server](https://docs.min.io/docs/golang-client-quickstart-guide)
-- [The Annastore documentation website](https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/overview)
-- [The Ecosystem of Annastore](https://ciusji.gitbook.io/guinsoolab/)
+- [The Annastore documentation website](https://ciusji.gitbook.io/annastore/)
+- [The Ecosystem of Annastore 🌈](https://ciusji.gitbook.io/guinsoolab/)
 
-## Contribute to Annastore Project
+## Contribute to AnnaStore Project
 
 Please follow AnnaStore [Contributor's Guide](https://github.com/GuinsooLab/annastore/blob/main/CONTRIBUTING.md)
-
-## Documentation
-
-[AnnaStore Guide](https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/overview).
 
 ## License
 

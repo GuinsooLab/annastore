@@ -182,7 +182,7 @@ func printCLIAccessMsg(endPoint string, alias string) {
 	// Get saved credentials.
 	cred := globalActiveCred
 
-	const mcQuickStartGuide = "https://ciusji.gitbook.io/guinsoolab/products/data-storage/annastore/quickstart/client"
+	const mcQuickStartGuide = "https://ciusji.gitbook.io/annastore/"
 
 	// Configure 'mc', following block prints platform specific information for minio client.
 	if color.IsTerminal() && !globalCLIContext.Anonymous {
