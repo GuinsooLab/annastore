@@ -12,8 +12,6 @@
 
 > High performance OSS storage platform.
 
-## Introduction
-
 AnnaStore supports the widest range of use cases across the largest number of environments. Cloud native
 since inception, AnnaStore’s software-defined suite runs seamlessly in the public cloud, private cloud and at the
 edge - making it a leader in the hybrid cloud. With industry leading performance and scalability, AnnaStore can
