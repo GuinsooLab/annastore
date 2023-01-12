@@ -19,12 +19,25 @@ deliver a range of use cases from AI/ML, analytics, backup/restore and modern we
 
 ## Main Feature
 
-- Hybrid cloud
-- Born cloud native
-- AnnaStore is pioneering high performance object storage
-- Built on the principles of web scale.
-- The defacto standard for Amazon S3 compatibility 
-- Simply powerful
+- Active-active replication
+- Encryption
+- Bucket & object immutability
+- AWS S3 compatibility
+- Data life cycle management & tiering
+- Scalability
+- Identity & access management
+
+## Quickstart
+
+```bash
+docker pull guinsoolab/annastore
+docker run -dt \
+    -p 9000:9000 -p 9090:9090
+    -v PATH:/mnt/data
+    -v /etc/default/annastore:/etc/config.env
+    --name "my_annastore"
+    annastore server --console-address ":9090"
+```
 
 ## Documentation
 
