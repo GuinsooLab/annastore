@@ -1,12 +1,11 @@
-FROM minio/minio:latest
+FROM guinsoolab/annastore:base
 
 ENV PATH=/opt/bin:$PATH
 
-COPY ./minio /opt/bin/minio
-COPY dockerscripts/docker-entrypoint.sh /usr/bin/docker-entrypoint.sh
+COPY ./annastore /opt/bin/annastore
 
 ENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]
 
 VOLUME ["/data"]
 
-CMD ["minio"]
+CMD ["annastore"]

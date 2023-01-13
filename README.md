@@ -31,12 +31,12 @@ deliver a range of use cases from AI/ML, analytics, backup/restore and modern we
 
 ```bash
 docker pull guinsoolab/annastore
-docker run -dt \
-    -p 9000:9000 -p 9090:9090
-    -v PATH:/mnt/data
-    -v /etc/default/annastore:/etc/config.env
-    --name "my_annastore"
-    annastore server --console-address ":9090"
+docker run \
+  -p 9000:9000 \
+  -p 9001:9001 \
+  guinsoolab/annastore:${LATEST_TAG} \
+  server /Users/admin \
+  --console-address ":9001"
 ```
 
 ## Documentation
