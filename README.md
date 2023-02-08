@@ -5,7 +5,7 @@
 <div align="center">
     <img src="https://raw.githubusercontent.com/GuinsooLab/annastore/main/public/annaStore.svg" width="120" alt="logo" />
     <br/>
-    <small>a high performance object storage system</small>
+    <a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=14&pause=1000&color=2A8DFF&center=true&width=700&lines=a+high+performance+object+storage+system" alt="Typing SVG" /></a>
 </div>
 
 # [AnnaStore](https://ciusji.gitbook.io/annastore/)
@@ -87,3 +87,6 @@ Please follow AnnaStore [Contributor's Guide](https://github.com/GuinsooLab/anna
 ## License
 
 Use of AnnaStore is governed by the GNU AGPLv3 license that can be found in the [LICENSE](./LICENSE) file.
+
+<img src="https://raw.githubusercontent.com/GuinsooLab/glab/main/src/images/guinsoolab-group.svg" width="120" alt="license" />
+
