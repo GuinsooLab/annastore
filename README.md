@@ -1,14 +1,14 @@
 <div align="right">
-    <img src="https://raw.githubusercontent.com/GuinsooLab/annastore/main/public/guinsoolab-badge.png" width="60" alt="badge">
+    <img src="https://raw.githubusercontent.com/GuinsooLab/glab/main/src/images/guinsoolab-badge.png" height="60" alt="badge">
     <br />
 </div>
 <div align="center">
-    <img src="https://raw.githubusercontent.com/GuinsooLab/annastore/main/public/annaStore.svg" width="120" alt="logo" />
-    <br/>
-    <a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=14&pause=1000&color=2A8DFF&center=true&width=700&lines=a+high+performance+object+storage+system" alt="Typing SVG" /></a>
+    <img src="https://raw.githubusercontent.com/GuinsooLab/glab/main/src/images/guinsoolab-annastore.svg" alt="logo" height="100" />
+    <br />
+    <br />
 </div>
 
-# [AnnaStore](https://ciusji.gitbook.io/annastore/)
+# AnnaStore
 
 > High performance OSS storage platform.
 
